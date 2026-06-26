@@ -1,0 +1,3 @@
+include README.md
+include mtrader/py.typed
+recursive-include mtrader/tests *.py
