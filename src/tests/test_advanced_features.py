@@ -75,7 +75,7 @@ def test_multitimeframe_portfolio_and_optimization_helpers():
     higher = resample_ohlcv(data, "5min")
     assert len(higher) < len(data)
     enriched = add_higher_timeframe_indicators(data, "5min", add=["sma1"], rolling_minutes=[3])
-    assert any(c.startswith("5min_can1_sma1_p3") for c in enriched.columns)
+    assert "can5_sma1_p3" in enriched.columns
 
     portfolio = run_portfolio({"AAA": data, "BBB": _df(seed=78)}, _strategy(), initial_capital=5000)
     assert portfolio["final_capital"] > 0

@@ -549,7 +549,7 @@ df = add_higher_timeframe_indicators(
     rolling_minutes=[20],
 )
 
-print(df["15min_can1_ema1_p20"])
+print(df["can15_ema1_p20"])
 ```
 
 ---

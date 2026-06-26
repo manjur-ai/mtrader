@@ -120,11 +120,11 @@ def resample_ohlcv(df, rule, label="right", closed="right"):
 def add_higher_timeframe_indicators(df, rule, add, rolling_minutes=None, prefix=None):
     from mtrader.indicator_engine import add_indicators
 
-    prefix = prefix or rule.replace(" ", "").replace("-", "_").lower()
+    prefix = prefix or _timeframe_can_prefix(rule)
     higher = resample_ohlcv(df, rule)
     higher = add_indicators(higher, add=add, rolling_minutes=rolling_minutes or [])
     feature_cols = [c for c in higher.columns if c.startswith("can1_")]
-    renamed = higher[["datetime"] + feature_cols].rename(columns={c: f"{prefix}_{c}" for c in feature_cols})
+    renamed = higher[["datetime"] + feature_cols].rename(columns={c: c.replace("can1_", f"{prefix}_", 1) for c in feature_cols})
     merged = pd.merge_asof(
         df.sort_values("datetime"),
         renamed.sort_values("datetime"),
@@ -132,6 +132,15 @@ def add_higher_timeframe_indicators(df, rule, add, rolling_minutes=None, prefix=
         direction="backward",
     )
     return merged
+
+
+def _timeframe_can_prefix(rule):
+    offset = pd.tseries.frequencies.to_offset(rule)
+    nanos = pd.Timedelta(offset).value
+    minutes = nanos // pd.Timedelta(minutes=1).value
+    if minutes <= 0 or nanos % pd.Timedelta(minutes=1).value != 0:
+        raise ValueError(f"rule must resolve to whole minutes: {rule!r}")
+    return f"can{minutes}"
 
 
 @dataclass
