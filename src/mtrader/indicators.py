@@ -179,3 +179,156 @@ def obv(close: np.ndarray, volume: np.ndarray) -> np.ndarray:
         else:
             out[i] = out[i - 1]
     return out
+
+
+def macd(close: np.ndarray, fast: int = 12, slow: int = 26, signal: int = 9):
+    close = np.asarray(close, dtype=np.float64)
+    from mtrader.indicators import ema
+    macd_line = ema(close, fast) - ema(close, slow)
+    signal_line = ema(macd_line, signal)
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
+
+
+def willr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> np.ndarray:
+    high = np.asarray(high, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    close = np.asarray(close, dtype=np.float64)
+    n = len(close)
+    out = np.full(n, np.nan, dtype=np.float64)
+    for i in range(period - 1, n):
+        hh = np.max(high[i - period + 1:i + 1])
+        ll = np.min(low[i - period + 1:i + 1])
+        denom = hh - ll
+        out[i] = -100.0 * (hh - close[i]) / denom if denom != 0 else -50.0
+    return out
+
+
+def cci(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 20) -> np.ndarray:
+    high = np.asarray(high, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    close = np.asarray(close, dtype=np.float64)
+    n = len(close)
+    tp = (high + low + close) / 3.0
+    out = np.full(n, np.nan, dtype=np.float64)
+    for i in range(period - 1, n):
+        seg = tp[i - period + 1:i + 1]
+        mu = np.mean(seg)
+        mad = np.mean(np.abs(seg - mu))
+        out[i] = (tp[i] - mu) / (0.015 * mad) if mad != 0 else 0.0
+    return out
+
+
+def adx(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> np.ndarray:
+    high = np.asarray(high, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    close = np.asarray(close, dtype=np.float64)
+    n = len(close)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if n < period + 1:
+        return out
+    up = np.zeros(n, dtype=np.float64)
+    down = np.zeros(n, dtype=np.float64)
+    for i in range(1, n):
+        up[i] = high[i] - high[i - 1]
+        down[i] = low[i - 1] - low[i]
+    tr = np.zeros(n, dtype=np.float64)
+    tr[0] = high[0] - low[0]
+    for i in range(1, n):
+        tr[i] = max(high[i] - low[i], abs(high[i] - close[i - 1]), abs(low[i] - close[i - 1]))
+    for i in range(1, n):
+        up[i] = up[i] if up[i] > down[i] and up[i] > 0 else 0.0
+        down[i] = down[i] if down[i] > up[i] and down[i] > 0 else 0.0
+    for i in range(period, n):
+        tr_avg = np.mean(tr[i - period + 1:i + 1])
+        up_avg = np.mean(up[i - period + 1:i + 1])
+        down_avg = np.mean(down[i - period + 1:i + 1])
+        pdi = 100.0 * up_avg / tr_avg if tr_avg != 0 else 0.0
+        ndi = 100.0 * down_avg / tr_avg if tr_avg != 0 else 0.0
+        dx = 100.0 * abs(pdi - ndi) / (pdi + ndi) if (pdi + ndi) != 0 else 0.0
+        out[i] = dx
+    return out
+
+
+def mfi(high: np.ndarray, low: np.ndarray, close: np.ndarray, volume: np.ndarray, period: int = 14) -> np.ndarray:
+    high = np.asarray(high, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    close = np.asarray(close, dtype=np.float64)
+    volume = np.asarray(volume, dtype=np.float64)
+    n = len(close)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if n < period + 1:
+        return out
+    tp = (high + low + close) / 3.0
+    raw = tp * volume
+    for i in range(period, n):
+        pos = 0.0
+        neg = 0.0
+        for j in range(i - period + 1, i + 1):
+            if tp[j] > tp[j - 1]:
+                pos += raw[j]
+            else:
+                neg += raw[j]
+        mfr = pos / neg if neg != 0 else 1e10
+        out[i] = 100.0 - 100.0 / (1.0 + mfr)
+    return out
+
+
+def psar(high: np.ndarray, low: np.ndarray, af: float = 0.02, max_af: float = 0.2) -> np.ndarray:
+    high = np.asarray(high, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    n = len(high)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if n < 2:
+        return out
+    bull = high[0] <= high[1]
+    sar = low[0] if bull else high[0]
+    ep = high[0] if bull else low[0]
+    accel = af
+    out[0] = sar
+    for i in range(1, n):
+        if bull:
+            sar = sar + accel * (ep - sar)
+            sar = min(sar, low[i - 1], low[i - 2] if i >= 2 else low[i - 1])
+            if low[i] < sar:
+                bull = False
+                sar = ep
+                ep = low[i]
+                accel = af
+            else:
+                if high[i] > ep:
+                    ep = high[i]
+                    accel = min(accel + af, max_af)
+        else:
+            sar = sar + accel * (ep - sar)
+            sar = max(sar, high[i - 1], high[i - 2] if i >= 2 else high[i - 1])
+            if high[i] > sar:
+                bull = True
+                sar = ep
+                ep = high[i]
+                accel = af
+            else:
+                if low[i] < ep:
+                    ep = low[i]
+                    accel = min(accel + af, max_af)
+        out[i] = sar
+    return out
+
+
+def heikin_ashi(open_p: np.ndarray, high: np.ndarray, low: np.ndarray, close: np.ndarray):
+    open_p = np.asarray(open_p, dtype=np.float64)
+    high = np.asarray(high, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    close = np.asarray(close, dtype=np.float64)
+    n = len(close)
+    ha_open = np.zeros(n, dtype=np.float64)
+    ha_close = np.zeros(n, dtype=np.float64)
+    ha_high = np.zeros(n, dtype=np.float64)
+    ha_low = np.zeros(n, dtype=np.float64)
+    ha_close[:] = (open_p + high + low + close) / 4.0
+    ha_open[0] = open_p[0]
+    for i in range(1, n):
+        ha_open[i] = (ha_open[i - 1] + ha_close[i - 1]) / 2.0
+    ha_high = np.maximum(np.maximum(ha_open, ha_close), high)
+    ha_low = np.minimum(np.minimum(ha_open, ha_close), low)
+    return ha_open, ha_high, ha_low, ha_close

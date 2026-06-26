@@ -856,6 +856,206 @@ def test_scenario10_exit_optimization():
                    f"stoploss={best['stoploss_delta']}")
 
 
+def _gen_ohlc_long(n=400):
+    return _gen_ohlc(n)
+
+
+def test_scenario11_macd_crossover():
+    from mtrader import precalculate_exit_time_amount_profit, take_trade_on_condition_numpy
+    df = _add_indicators_for_scenario(_gen_ohlc_long(400), ["macd"], [])
+    entry = [[
+        {"first_column_name": "can1_macd", "second_column_name": "can1_macdsignal",
+         "shift_down_first": 1, "shift_down_second": 1,
+         "lower_range_of_difference": -np.inf, "upper_range_of_difference": 0,
+         "perform_normalization_of_diff": False},
+        {"first_column_name": "can1_macd", "second_column_name": "can1_macdsignal",
+         "shift_down_first": 0, "shift_down_second": 0,
+         "lower_range_of_difference": 0, "upper_range_of_difference": np.inf,
+         "perform_normalization_of_diff": False},
+    ]]
+    exit_cond = [[
+        {"first_column_name": "can1_macd", "second_column_name": "can1_macdsignal",
+         "shift_down_first": 1, "shift_down_second": 1,
+         "lower_range_of_difference": 0, "upper_range_of_difference": np.inf,
+         "perform_normalization_of_diff": False},
+        {"first_column_name": "can1_macd", "second_column_name": "can1_macdsignal",
+         "shift_down_first": 0, "shift_down_second": 0,
+         "lower_range_of_difference": -np.inf, "upper_range_of_difference": 0,
+         "perform_normalization_of_diff": False},
+    ]]
+    df = precalculate_exit_time_amount_profit(df, exit_cond, buy_or_sell="buy")
+    _, fc, m = take_trade_on_condition_numpy(df, entry)
+    builtins.print(f"  S11 MACD: {m['Sharpe Ratio']:.3f} sharpe, capital={fc:.2f}")
+
+
+def test_scenario12_psar():
+    from mtrader import precalculate_exit_time_amount_profit, take_trade_on_condition_numpy
+    df = _add_indicators_for_scenario(_gen_ohlc_long(400), ["psar", "close", "high", "low"], [])
+    entry = [[{"first_column_name": "close", "second_column_name": "can1_psar",
+               "shift_down_first": 0, "shift_down_second": 0,
+               "lower_range_of_difference": 0, "upper_range_of_difference": np.inf,
+               "perform_normalization_of_diff": False}]]
+    exit_cond = [[{"first_column_name": "close", "second_column_name": "can1_psar",
+                   "shift_down_first": 0, "shift_down_second": 0,
+                   "lower_range_of_difference": -np.inf, "upper_range_of_difference": 0,
+                   "perform_normalization_of_diff": False}]]
+    df = precalculate_exit_time_amount_profit(df, exit_cond, buy_or_sell="buy")
+    _, fc, m = take_trade_on_condition_numpy(df, entry)
+    builtins.print(f"  S12 PSAR: {m['Sharpe Ratio']:.3f} sharpe, capital={fc:.2f}")
+
+
+def test_scenario13_adx_filter():
+    from mtrader import precalculate_exit_time_amount_profit, take_trade_on_condition_numpy
+    df = _add_indicators_for_scenario(_gen_ohlc_long(400), ["ema1", "adx"], [20, 50, 14])
+    entry = [[
+        {"first_column_name": "can1_ema1_p20", "second_column_name": "can1_ema1_p50",
+         "shift_down_first": 0, "shift_down_second": 0,
+         "lower_range_of_difference": 0, "upper_range_of_difference": np.inf,
+         "perform_normalization_of_diff": False},
+        {"first_column_name": "can1_adx_p14", "second_column_name": "close",
+         "shift_down_first": 0, "shift_down_second": 0,
+         "lower_range_of_difference": 25, "upper_range_of_difference": np.inf,
+         "perform_normalization_of_diff": False},
+    ]]
+    exit_cond = [[
+        {"first_column_name": "can1_ema1_p20", "second_column_name": "can1_ema1_p50",
+         "shift_down_first": 0, "shift_down_second": 0,
+         "lower_range_of_difference": -np.inf, "upper_range_of_difference": 0,
+         "perform_normalization_of_diff": False},
+    ]]
+    df = precalculate_exit_time_amount_profit(df, exit_cond, buy_or_sell="buy")
+    _, fc, m = take_trade_on_condition_numpy(df, entry)
+    builtins.print(f"  S13 ADX: {m['Sharpe Ratio']:.3f} sharpe, capital={fc:.2f}")
+
+
+def test_scenario14_cci_reversion():
+    from mtrader import precalculate_exit_time_amount_profit, take_trade_on_condition_numpy
+    df = _add_indicators_for_scenario(_gen_ohlc_long(400), ["cci"], [20])
+    entry = [[{"first_column_name": "can1_cci_p20", "second_column_name": "close",
+               "shift_down_first": 0, "shift_down_second": 0,
+               "lower_range_of_difference": -np.inf, "upper_range_of_difference": -100,
+               "perform_normalization_of_diff": False}]]
+    exit_cond = [[{"first_column_name": "can1_cci_p20", "second_column_name": "close",
+                   "shift_down_first": 0, "shift_down_second": 0,
+                   "lower_range_of_difference": 0, "upper_range_of_difference": np.inf,
+                   "perform_normalization_of_diff": False}]]
+    df = precalculate_exit_time_amount_profit(df, exit_cond, buy_or_sell="buy")
+    _, fc, m = take_trade_on_condition_numpy(df, entry)
+    builtins.print(f"  S14 CCI: {m['Sharpe Ratio']:.3f} sharpe, capital={fc:.2f}")
+
+
+def test_scenario15_williams_r():
+    from mtrader import precalculate_exit_time_amount_profit, take_trade_on_condition_numpy
+    df = _add_indicators_for_scenario(_gen_ohlc_long(400), ["willr"], [14])
+    entry = [[{"first_column_name": "can1_willr_p14", "second_column_name": "close",
+               "shift_down_first": 0, "shift_down_second": 0,
+               "lower_range_of_difference": -np.inf, "upper_range_of_difference": -80,
+               "perform_normalization_of_diff": False}]]
+    exit_cond = [[{"first_column_name": "can1_willr_p14", "second_column_name": "close",
+                   "shift_down_first": 0, "shift_down_second": 0,
+                   "lower_range_of_difference": -50, "upper_range_of_difference": np.inf,
+                   "perform_normalization_of_diff": False}]]
+    df = precalculate_exit_time_amount_profit(df, exit_cond, buy_or_sell="buy")
+    _, fc, m = take_trade_on_condition_numpy(df, entry)
+    builtins.print(f"  S15 Williams%R: {m['Sharpe Ratio']:.3f} sharpe, capital={fc:.2f}")
+
+
+def test_scenario16_mfi_oversold():
+    from mtrader import precalculate_exit_time_amount_profit, take_trade_on_condition_numpy
+    df = _add_indicators_for_scenario(_gen_ohlc_long(400), ["mfi"], [14])
+    entry = [[{"first_column_name": "can1_mfi_p14", "second_column_name": "close",
+               "shift_down_first": 0, "shift_down_second": 0,
+               "lower_range_of_difference": -np.inf, "upper_range_of_difference": 20,
+               "perform_normalization_of_diff": False}]]
+    exit_cond = [[{"first_column_name": "can1_mfi_p14", "second_column_name": "close",
+                   "shift_down_first": 0, "shift_down_second": 0,
+                   "lower_range_of_difference": 50, "upper_range_of_difference": np.inf,
+                   "perform_normalization_of_diff": False}]]
+    df = precalculate_exit_time_amount_profit(df, exit_cond, buy_or_sell="buy")
+    _, fc, m = take_trade_on_condition_numpy(df, entry)
+    builtins.print(f"  S16 MFI: {m['Sharpe Ratio']:.3f} sharpe, capital={fc:.2f}")
+
+
+def test_scenario17_ha_trend():
+    from mtrader import precalculate_exit_time_amount_profit, take_trade_on_condition_numpy
+    df = _add_indicators_for_scenario(_gen_ohlc_long(400), ["ha", "close", "high", "low", "open"], [])
+    entry = [[
+        {"first_column_name": "can1_ha_close", "second_column_name": "can1_ha_open",
+         "shift_down_first": 2, "shift_down_second": 2,
+         "lower_range_of_difference": 0, "upper_range_of_difference": np.inf,
+         "perform_normalization_of_diff": False},
+        {"first_column_name": "can1_ha_close", "second_column_name": "can1_ha_open",
+         "shift_down_first": 1, "shift_down_second": 1,
+         "lower_range_of_difference": 0, "upper_range_of_difference": np.inf,
+         "perform_normalization_of_diff": False},
+    ]]
+    exit_cond = [[{"first_column_name": "can1_ha_close", "second_column_name": "can1_ha_open",
+                   "shift_down_first": 0, "shift_down_second": 0,
+                   "lower_range_of_difference": -np.inf, "upper_range_of_difference": 0,
+                   "perform_normalization_of_diff": False}]]
+    df = precalculate_exit_time_amount_profit(df, exit_cond, buy_or_sell="buy")
+    _, fc, m = take_trade_on_condition_numpy(df, entry)
+    builtins.print(f"  S17 HA: {m['Sharpe Ratio']:.3f} sharpe, capital={fc:.2f}")
+
+
+def test_scenario18_donchian():
+    from mtrader import precalculate_exit_time_amount_profit, take_trade_on_condition_numpy
+    df = _add_indicators_for_scenario(_gen_ohlc_long(400), ["max", "min", "close", "high", "low"], [20, 10])
+    entry = [[{"first_column_name": "close", "second_column_name": "can1_max_p20",
+               "shift_down_first": 1, "shift_down_second": 1,
+               "lower_range_of_difference": 0, "upper_range_of_difference": np.inf,
+               "perform_normalization_of_diff": False},
+              {"first_column_name": "close", "second_column_name": "can1_max_p20",
+               "shift_down_first": 0, "shift_down_second": 0,
+               "lower_range_of_difference": 0, "upper_range_of_difference": np.inf,
+               "perform_normalization_of_diff": False}]]
+    exit_cond = [[{"first_column_name": "close", "second_column_name": "can1_min_p10",
+                   "shift_down_first": 0, "shift_down_second": 0,
+                   "lower_range_of_difference": -np.inf, "upper_range_of_difference": 0,
+                   "perform_normalization_of_diff": False}]]
+    df = precalculate_exit_time_amount_profit(df, exit_cond, buy_or_sell="buy")
+    _, fc, m = take_trade_on_condition_numpy(df, entry)
+    builtins.print(f"  S18 Donchian: {m['Sharpe Ratio']:.3f} sharpe, capital={fc:.2f}")
+
+
+def test_scenario19_keltner():
+    from mtrader import precalculate_exit_time_amount_profit, take_trade_on_condition_numpy
+    df = _add_indicators_for_scenario(_gen_ohlc_long(400), ["ema1", "atr", "close"], [20, 14])
+    df["keltner_lower"] = df["can1_ema1_p20"] - 2.0 * df["can1_atr_p14"]
+    entry = [[{"first_column_name": "close", "second_column_name": "keltner_lower",
+               "shift_down_first": 0, "shift_down_second": 0,
+               "lower_range_of_difference": -np.inf, "upper_range_of_difference": 0,
+               "perform_normalization_of_diff": False}]]
+    exit_cond = [[{"first_column_name": "close", "second_column_name": "can1_ema1_p20",
+                   "shift_down_first": 0, "shift_down_second": 0,
+                   "lower_range_of_difference": 0, "upper_range_of_difference": 0,
+                   "perform_normalization_of_diff": False}]]
+    df = precalculate_exit_time_amount_profit(df, exit_cond, buy_or_sell="buy")
+    _, fc, m = take_trade_on_condition_numpy(df, entry)
+    builtins.print(f"  S19 Keltner: {m['Sharpe Ratio']:.3f} sharpe, capital={fc:.2f}")
+
+
+def test_scenario20_volume_breakout():
+    from mtrader import precalculate_exit_time_amount_profit, take_trade_on_condition_numpy
+    df = _gen_ohlc_long(400)
+    from mtrader import add_indicators
+    df = add_indicators(df, add=["sma1", "max", "close", "high", "low", "volume"], rolling_minutes=[5, 20])
+    df["vol_sma20"] = df["volume"].rolling(20).mean()
+    entry = [[
+        {"first_column_name": "close", "second_column_name": "can1_max_p20",
+         "shift_down_first": 0, "shift_down_second": 0,
+         "lower_range_of_difference": 0, "upper_range_of_difference": np.inf,
+         "perform_normalization_of_diff": False},
+        {"first_column_name": "volume", "second_column_name": "vol_sma20",
+         "shift_down_first": 0, "shift_down_second": 0,
+         "lower_range_of_difference": 0, "upper_range_of_difference": np.inf,
+         "perform_normalization_of_diff": False},
+    ]]
+    df = precalculate_exit_time_amount_profit(df, entry, buy_or_sell="buy")
+    _, fc, m = take_trade_on_condition_numpy(df, entry)
+    builtins.print(f"  S20 VolBreak: {m['Sharpe Ratio']:.3f} sharpe, capital={fc:.2f}")
+
+
 def test_find_best_exit_raises_on_empty():
     from mtrader import find_best_exit
     import pytest

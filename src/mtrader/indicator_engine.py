@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
-from mtrader.indicators import ema, evol, wma, wvol, ssma, ssvol, rsi, atr, stoch_k, stoch_d, bollinger_b, obv
+from mtrader.indicators import ema, evol, wma, wvol, ssma, ssvol, rsi, atr
+from mtrader.indicators import stoch_k, stoch_d, bollinger_b, obv, macd, willr, cci, adx, mfi, psar, heikin_ashi
 
 
 FEATURE_CODE = {
@@ -569,9 +570,40 @@ def add_indicators(df, add, rolling_minutes=None, days_back=None):
             df[f'can1_stochd_p{rolling_minute}'] = stoch_d(df[k_col].to_numpy(), 3)
         if "bbp" in full_add:
             df[f'can1_bbp_p{rolling_minute}'] = bollinger_b(df['close'].to_numpy(), rolling_minute)
+        if "willr" in full_add:
+            df[f'can1_willr_p{rolling_minute}'] = willr(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute)
+        if "cci" in full_add:
+            df[f'can1_cci_p{rolling_minute}'] = cci(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute)
+        if "adx" in full_add:
+            df[f'can1_adx_p{rolling_minute}'] = adx(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute)
+        if "mfi" in full_add:
+            df[f'can1_mfi_p{rolling_minute}'] = mfi(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(),
+                df['volume'].to_numpy(), rolling_minute)
+
+    if "macd" in full_add:
+        ml, ms, mh = macd(df['close'].to_numpy())
+        df['can1_macd'] = ml
+        df['can1_macdsignal'] = ms
+        df['can1_macdhist'] = mh
 
     if "obv" in full_add:
         df['can1_obv'] = obv(df['close'].to_numpy(), df['volume'].to_numpy())
+
+    if "psar" in full_add:
+        df['can1_psar'] = psar(df['high'].to_numpy(), df['low'].to_numpy())
+
+    if "ha" in full_add:
+        hao, hah, hal, hac = heikin_ashi(
+            df['open'].to_numpy(), df['high'].to_numpy(),
+            df['low'].to_numpy(), df['close'].to_numpy())
+        df['can1_ha_open'] = hao
+        df['can1_ha_high'] = hah
+        df['can1_ha_low'] = hal
+        df['can1_ha_close'] = hac
 
     column_temp_added = [c for c in (full_add - set(add)) if c in df.columns]
     df.drop(columns=column_temp_added, inplace=True)
