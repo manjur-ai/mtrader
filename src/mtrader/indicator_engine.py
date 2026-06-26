@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from mtrader.indicators import ema, evol, wma, wvol, ssma, ssvol, rsi, atr
 from mtrader.indicators import stoch_k, stoch_d, bollinger_b, obv, macd, willr, cci, adx, mfi, psar, heikin_ashi
+from mtrader.indicators import supertrend, ichimoku, inside_bar, bullish_engulfing, bearish_engulfing
 
 
 FEATURE_CODE = {
@@ -583,6 +584,12 @@ def add_indicators(df, add, rolling_minutes=None, days_back=None):
             df[f'can1_mfi_p{rolling_minute}'] = mfi(
                 df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(),
                 df['volume'].to_numpy(), rolling_minute)
+        if "supertrend" in full_add:
+            st, st_dir = supertrend(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute
+            )
+            df[f'can1_supertrend_p{rolling_minute}'] = st
+            df[f'can1_supertrend_dir_p{rolling_minute}'] = st_dir
 
     if "macd" in full_add:
         ml, ms, mh = macd(df['close'].to_numpy())
@@ -605,7 +612,48 @@ def add_indicators(df, add, rolling_minutes=None, days_back=None):
         df['can1_ha_low'] = hal
         df['can1_ha_close'] = hac
 
-    column_temp_added = [c for c in (full_add - set(add)) if c in df.columns]
+    if "ichimoku" in full_add:
+        tenkan, kijun, span_a, span_b, chikou = ichimoku(
+            df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy())
+        df['can1_ichi_tenkan'] = tenkan
+        df['can1_ichi_kijun'] = kijun
+        df['can1_ichi_span_a'] = span_a
+        df['can1_ichi_span_b'] = span_b
+        df['can1_ichi_chikou'] = chikou
+
+    if "prev_day" in full_add or "pivot" in full_add or "gap" in full_add:
+        daily = df.groupby(df['datetime'].dt.date).agg(
+            prev_high=('high', 'max'),
+            prev_low=('low', 'min'),
+            prev_close=('close', 'last'),
+            day_open=('open', 'first'),
+        ).shift(1)
+        date_key = df['datetime'].dt.date
+        if "prev_day" in full_add:
+            df['can1_prev_day_high'] = date_key.map(daily['prev_high'])
+            df['can1_prev_day_low'] = date_key.map(daily['prev_low'])
+            df['can1_prev_day_close'] = date_key.map(daily['prev_close'])
+        if "pivot" in full_add:
+            pivot = (daily['prev_high'] + daily['prev_low'] + daily['prev_close']) / 3.0
+            r1 = (2.0 * pivot) - daily['prev_low']
+            s1 = (2.0 * pivot) - daily['prev_high']
+            df['can1_pivot'] = date_key.map(pivot)
+            df['can1_pivot_r1'] = date_key.map(r1)
+            df['can1_pivot_s1'] = date_key.map(s1)
+        if "gap" in full_add:
+            day_open = df.groupby(df['datetime'].dt.date)['open'].transform('first')
+            prev_close = date_key.map(daily['prev_close'])
+            df['can1_gap_pct'] = ((day_open - prev_close) / prev_close) * 100.0
+
+    if "inside_bar" in full_add:
+        df['can1_inside_bar'] = inside_bar(df['high'].to_numpy(), df['low'].to_numpy())
+
+    if "engulfing" in full_add:
+        df['can1_bullish_engulfing'] = bullish_engulfing(df['open'].to_numpy(), df['close'].to_numpy())
+        df['can1_bearish_engulfing'] = bearish_engulfing(df['open'].to_numpy(), df['close'].to_numpy())
+
+    source_columns = {"datetime", "open", "high", "low", "close", "volume"}
+    column_temp_added = [c for c in (full_add - set(add)) if c in df.columns and c not in source_columns]
     df.drop(columns=column_temp_added, inplace=True)
 
     return df

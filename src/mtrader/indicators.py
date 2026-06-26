@@ -1,4 +1,40 @@
 import numpy as np
+import pandas as pd
+
+
+def _rolling_sum_strict(values: np.ndarray, period: int) -> np.ndarray:
+    values = np.asarray(values, dtype=np.float64)
+    n = len(values)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if period <= 0:
+        raise ValueError("period must be a positive integer")
+    if n < period:
+        return out
+
+    finite = np.isfinite(values)
+    clean = np.where(finite, values, 0.0)
+    csum = np.cumsum(clean, dtype=np.float64)
+    counts = np.cumsum(finite.astype(np.int32))
+
+    sums = csum[period - 1:].copy()
+    sums[1:] -= csum[:-period]
+    valid_counts = counts[period - 1:].copy()
+    valid_counts[1:] -= counts[:-period]
+    out[period - 1:] = np.where(valid_counts == period, sums, np.nan)
+    return out
+
+
+def _rolling_mean_strict(values: np.ndarray, period: int) -> np.ndarray:
+    return _rolling_sum_strict(values, period) / period
+
+
+def _rolling_minmax(values: np.ndarray, period: int, find_max: bool) -> np.ndarray:
+    values = np.asarray(values, dtype=np.float64)
+    if period <= 0:
+        raise ValueError("period must be a positive integer")
+    rolling = pd.Series(values, copy=False).rolling(window=period, min_periods=period)
+    result = rolling.max() if find_max else rolling.min()
+    return result.to_numpy(dtype=np.float64, copy=False)
 
 
 def ema(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
@@ -120,48 +156,51 @@ def atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -> np
         return out
     tr = np.zeros(n, dtype=np.float64)
     tr[0] = high[0] - low[0]
-    for i in range(1, n):
-        tr[i] = max(high[i] - low[i], abs(high[i] - close[i - 1]), abs(low[i] - close[i - 1]))
-    for i in range(period - 1, n):
-        out[i] = np.mean(tr[i - period + 1:i + 1])
-    return out
+    high_low = high[1:] - low[1:]
+    high_prev_close = np.abs(high[1:] - close[:-1])
+    low_prev_close = np.abs(low[1:] - close[:-1])
+    tr[1:] = np.maximum(high_low, np.maximum(high_prev_close, low_prev_close))
+    return _rolling_mean_strict(tr, period)
 
 
 def stoch_k(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -> np.ndarray:
     high = np.asarray(high, dtype=np.float64)
     low = np.asarray(low, dtype=np.float64)
     close = np.asarray(close, dtype=np.float64)
-    n = len(close)
-    out = np.full(n, np.nan, dtype=np.float64)
-    for i in range(period - 1, n):
-        hh = np.max(high[i - period + 1:i + 1])
-        ll = np.min(low[i - period + 1:i + 1])
-        denom = hh - ll
-        out[i] = 100.0 * (close[i] - ll) / denom if denom != 0 else 50.0
+    hh = _rolling_minmax(high, period, find_max=True)
+    ll = _rolling_minmax(low, period, find_max=False)
+    denom = hh - ll
+    out = np.where(denom != 0, 100.0 * (close - ll) / denom, 50.0)
+    out[:period - 1] = np.nan
     return out
 
 
 def stoch_d(k_values: np.ndarray, period: int = 3) -> np.ndarray:
     k = np.asarray(k_values, dtype=np.float64)
-    n = len(k)
-    out = np.full(n, np.nan, dtype=np.float64)
-    for i in range(period - 1, n):
-        out[i] = np.mean(k[i - period + 1:i + 1])
-    return out
+    return _rolling_mean_strict(k, period)
 
 
 def bollinger_b(close: np.ndarray, period: int, k: float = 2.0) -> np.ndarray:
     close = np.asarray(close, dtype=np.float64)
     n = len(close)
     out = np.full(n, np.nan, dtype=np.float64)
-    for i in range(period - 1, n):
-        seg = close[i - period + 1:i + 1]
-        mu = np.mean(seg)
-        sigma = np.std(seg, ddof=1)
-        upper = mu + k * sigma
-        lower = mu - k * sigma
-        denom = upper - lower
-        out[i] = (close[i] - lower) / denom if denom != 0 else 0.5
+    if period <= 0:
+        raise ValueError("period must be a positive integer")
+    if n < period:
+        return out
+    rolling_sum = _rolling_sum_strict(close, period)
+    rolling_sum_sq = _rolling_sum_strict(close * close, period)
+    mu = rolling_sum / period
+    if period == 1:
+        sigma = np.full(n, np.nan, dtype=np.float64)
+    else:
+        var = (rolling_sum_sq - (rolling_sum * rolling_sum / period)) / (period - 1)
+        sigma = np.sqrt(np.maximum(var, 0.0))
+    upper = mu + k * sigma
+    lower = mu - k * sigma
+    denom = upper - lower
+    valid = (np.arange(n) >= period - 1) & np.isfinite(denom)
+    out[valid] = np.where(denom[valid] != 0, (close[valid] - lower[valid]) / denom[valid], 0.5)
     return out
 
 
@@ -194,13 +233,11 @@ def willr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14
     high = np.asarray(high, dtype=np.float64)
     low = np.asarray(low, dtype=np.float64)
     close = np.asarray(close, dtype=np.float64)
-    n = len(close)
-    out = np.full(n, np.nan, dtype=np.float64)
-    for i in range(period - 1, n):
-        hh = np.max(high[i - period + 1:i + 1])
-        ll = np.min(low[i - period + 1:i + 1])
-        denom = hh - ll
-        out[i] = -100.0 * (hh - close[i]) / denom if denom != 0 else -50.0
+    hh = _rolling_minmax(high, period, find_max=True)
+    ll = _rolling_minmax(low, period, find_max=False)
+    denom = hh - ll
+    out = np.where(denom != 0, -100.0 * (hh - close) / denom, -50.0)
+    out[:period - 1] = np.nan
     return out
 
 
@@ -229,24 +266,25 @@ def adx(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) 
         return out
     up = np.zeros(n, dtype=np.float64)
     down = np.zeros(n, dtype=np.float64)
-    for i in range(1, n):
-        up[i] = high[i] - high[i - 1]
-        down[i] = low[i - 1] - low[i]
+    up[1:] = high[1:] - high[:-1]
+    down[1:] = low[:-1] - low[1:]
     tr = np.zeros(n, dtype=np.float64)
     tr[0] = high[0] - low[0]
-    for i in range(1, n):
-        tr[i] = max(high[i] - low[i], abs(high[i] - close[i - 1]), abs(low[i] - close[i - 1]))
-    for i in range(1, n):
-        up[i] = up[i] if up[i] > down[i] and up[i] > 0 else 0.0
-        down[i] = down[i] if down[i] > up[i] and down[i] > 0 else 0.0
-    for i in range(period, n):
-        tr_avg = np.mean(tr[i - period + 1:i + 1])
-        up_avg = np.mean(up[i - period + 1:i + 1])
-        down_avg = np.mean(down[i - period + 1:i + 1])
-        pdi = 100.0 * up_avg / tr_avg if tr_avg != 0 else 0.0
-        ndi = 100.0 * down_avg / tr_avg if tr_avg != 0 else 0.0
-        dx = 100.0 * abs(pdi - ndi) / (pdi + ndi) if (pdi + ndi) != 0 else 0.0
-        out[i] = dx
+    high_low = high[1:] - low[1:]
+    high_prev_close = np.abs(high[1:] - close[:-1])
+    low_prev_close = np.abs(low[1:] - close[:-1])
+    tr[1:] = np.maximum(high_low, np.maximum(high_prev_close, low_prev_close))
+    plus_dm = np.where((up > down) & (up > 0), up, 0.0)
+    minus_dm = np.where((down > up) & (down > 0), down, 0.0)
+
+    tr_avg = _rolling_mean_strict(tr, period)
+    up_avg = _rolling_mean_strict(plus_dm, period)
+    down_avg = _rolling_mean_strict(minus_dm, period)
+    pdi = np.divide(100.0 * up_avg, tr_avg, out=np.zeros(n, dtype=np.float64), where=tr_avg != 0)
+    ndi = np.divide(100.0 * down_avg, tr_avg, out=np.zeros(n, dtype=np.float64), where=tr_avg != 0)
+    denom = pdi + ndi
+    out = np.divide(100.0 * np.abs(pdi - ndi), denom, out=np.zeros(n, dtype=np.float64), where=denom != 0)
+    out[:period] = np.nan
     return out
 
 
@@ -261,16 +299,107 @@ def mfi(high: np.ndarray, low: np.ndarray, close: np.ndarray, volume: np.ndarray
         return out
     tp = (high + low + close) / 3.0
     raw = tp * volume
-    for i in range(period, n):
-        pos = 0.0
-        neg = 0.0
-        for j in range(i - period + 1, i + 1):
-            if tp[j] > tp[j - 1]:
-                pos += raw[j]
-            else:
-                neg += raw[j]
-        mfr = pos / neg if neg != 0 else 1e10
-        out[i] = 100.0 - 100.0 / (1.0 + mfr)
+    pos_flow = np.zeros(n, dtype=np.float64)
+    neg_flow = np.zeros(n, dtype=np.float64)
+    pos_mask = tp[1:] > tp[:-1]
+    pos_flow[1:] = np.where(pos_mask, raw[1:], 0.0)
+    neg_flow[1:] = np.where(pos_mask, 0.0, raw[1:])
+    pos = _rolling_sum_strict(pos_flow, period)
+    neg = _rolling_sum_strict(neg_flow, period)
+    mfr = np.divide(pos, neg, out=np.full(n, 1e10, dtype=np.float64), where=neg != 0)
+    out = 100.0 - 100.0 / (1.0 + mfr)
+    out[:period] = np.nan
+    return out
+
+
+def supertrend(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 10, multiplier: float = 3.0):
+    high = np.asarray(high, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    close = np.asarray(close, dtype=np.float64)
+    n = len(close)
+    line = np.full(n, np.nan, dtype=np.float64)
+    direction = np.zeros(n, dtype=np.float64)
+    if n == 0:
+        return line, direction
+
+    atr_values = atr(high, low, close, period)
+    hl2 = (high + low) / 2.0
+    upper = hl2 + multiplier * atr_values
+    lower = hl2 - multiplier * atr_values
+    final_upper = upper.copy()
+    final_lower = lower.copy()
+
+    first = period - 1
+    if first >= n:
+        return line, direction
+
+    direction[first] = 1.0
+    line[first] = final_lower[first]
+    for i in range(first + 1, n):
+        if upper[i] < final_upper[i - 1] or close[i - 1] > final_upper[i - 1]:
+            final_upper[i] = upper[i]
+        else:
+            final_upper[i] = final_upper[i - 1]
+
+        if lower[i] > final_lower[i - 1] or close[i - 1] < final_lower[i - 1]:
+            final_lower[i] = lower[i]
+        else:
+            final_lower[i] = final_lower[i - 1]
+
+        if line[i - 1] == final_upper[i - 1]:
+            direction[i] = 1.0 if close[i] > final_upper[i] else -1.0
+        else:
+            direction[i] = -1.0 if close[i] < final_lower[i] else 1.0
+        line[i] = final_lower[i] if direction[i] > 0 else final_upper[i]
+
+    direction[:first] = np.nan
+    return line, direction
+
+
+def ichimoku(high: np.ndarray, low: np.ndarray, close: np.ndarray, tenkan: int = 9, kijun: int = 26, senkou_b: int = 52):
+    high = np.asarray(high, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    close = np.asarray(close, dtype=np.float64)
+    tenkan_line = (_rolling_minmax(high, tenkan, True) + _rolling_minmax(low, tenkan, False)) / 2.0
+    kijun_line = (_rolling_minmax(high, kijun, True) + _rolling_minmax(low, kijun, False)) / 2.0
+    span_a = (tenkan_line + kijun_line) / 2.0
+    span_b = (_rolling_minmax(high, senkou_b, True) + _rolling_minmax(low, senkou_b, False)) / 2.0
+    chikou = np.roll(close, -kijun)
+    if kijun > 0:
+        chikou[-kijun:] = np.nan
+    return tenkan_line, kijun_line, span_a, span_b, chikou
+
+
+def inside_bar(high: np.ndarray, low: np.ndarray) -> np.ndarray:
+    high = np.asarray(high, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    out = np.zeros(len(high), dtype=np.float64)
+    if len(high) > 1:
+        out[1:] = ((high[1:] <= high[:-1]) & (low[1:] >= low[:-1])).astype(np.float64)
+    return out
+
+
+def bullish_engulfing(open_p: np.ndarray, close: np.ndarray) -> np.ndarray:
+    open_p = np.asarray(open_p, dtype=np.float64)
+    close = np.asarray(close, dtype=np.float64)
+    out = np.zeros(len(close), dtype=np.float64)
+    if len(close) > 1:
+        prev_bear = close[:-1] < open_p[:-1]
+        curr_bull = close[1:] > open_p[1:]
+        engulfs = (open_p[1:] <= close[:-1]) & (close[1:] >= open_p[:-1])
+        out[1:] = (prev_bear & curr_bull & engulfs).astype(np.float64)
+    return out
+
+
+def bearish_engulfing(open_p: np.ndarray, close: np.ndarray) -> np.ndarray:
+    open_p = np.asarray(open_p, dtype=np.float64)
+    close = np.asarray(close, dtype=np.float64)
+    out = np.zeros(len(close), dtype=np.float64)
+    if len(close) > 1:
+        prev_bull = close[:-1] > open_p[:-1]
+        curr_bear = close[1:] < open_p[1:]
+        engulfs = (open_p[1:] >= close[:-1]) & (close[1:] <= open_p[:-1])
+        out[1:] = (prev_bull & curr_bear & engulfs).astype(np.float64)
     return out
 
 

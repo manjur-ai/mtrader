@@ -56,17 +56,20 @@ def take_trade_on_condition(df, conditions, cupy=False, leverage=1, initial_capi
 
     final_capital = capital_at_exit[take_trade][-1] if array_lib.any(take_trade) else initial_capital
 
-    log_capital_at_exit = array_lib.log(array_lib.clip(capital_at_exit[capital_at_exit > 0], 1e-10, None))
-    log_returns = log_capital_at_exit[1:] - log_capital_at_exit[:-1]
-
-    volatility = array_lib.std(log_returns)
-    mean_log_return = array_lib.mean(log_returns)
-    sharpe_ratio = (mean_log_return - risk_free_rate) / volatility if volatility > 0 else float('nan')
-
     capital_at_exit = capital_at_exit[capital_at_exit > 0]
-    peak_capital = array_lib.maximum.accumulate(capital_at_exit)
-    drawdowns = (peak_capital - capital_at_exit) / peak_capital
-    max_drawdown = array_lib.max(drawdowns) * 100 if len(drawdowns) > 0 else 0
+    if len(capital_at_exit) > 1:
+        log_capital_at_exit = array_lib.log(array_lib.clip(capital_at_exit, 1e-10, None))
+        log_returns = log_capital_at_exit[1:] - log_capital_at_exit[:-1]
+        volatility = array_lib.std(log_returns)
+        mean_log_return = array_lib.mean(log_returns)
+        sharpe_ratio = (mean_log_return - risk_free_rate) / volatility if volatility > 0 else float('nan')
+        peak_capital = array_lib.maximum.accumulate(capital_at_exit)
+        drawdowns = (peak_capital - capital_at_exit) / peak_capital
+        max_drawdown = array_lib.max(drawdowns) * 100 if len(drawdowns) > 0 else 0
+    else:
+        volatility = 0.0
+        sharpe_ratio = float('nan')
+        max_drawdown = 0.0
 
     metrics = {
         "Volatility": volatility.get() if cupy and has_cupy else volatility,
@@ -114,16 +117,20 @@ def take_trade_on_condition_numpy(df, conditions, leverage=1, initial_capital=10
     df_filtered = df[df["take_trade"]] if np.any(take_trade) else df.iloc[[]]
     final_capital = capital_at_exit[take_trade][-1] if np.any(take_trade) else initial_capital
 
-    log_capital_at_exit = np.log(np.clip(capital_at_exit[capital_at_exit > 0], 1e-10, None))
-    log_returns = log_capital_at_exit[1:] - log_capital_at_exit[:-1]
-
-    volatility = np.std(log_returns)
-    mean_log_return = np.mean(log_returns)
-    sharpe_ratio = (mean_log_return - risk_free_rate) / volatility if volatility > 0 else float('nan')
-
-    cumulative_max = np.maximum.accumulate(log_capital_at_exit)
-    drawdowns = cumulative_max - log_capital_at_exit
-    max_drawdown = np.max(drawdowns) if len(drawdowns) > 0 else 0
+    positive_capital = capital_at_exit[capital_at_exit > 0]
+    if len(positive_capital) > 1:
+        log_capital_at_exit = np.log(np.clip(positive_capital, 1e-10, None))
+        log_returns = log_capital_at_exit[1:] - log_capital_at_exit[:-1]
+        volatility = np.std(log_returns)
+        mean_log_return = np.mean(log_returns)
+        sharpe_ratio = (mean_log_return - risk_free_rate) / volatility if volatility > 0 else float('nan')
+        cumulative_max = np.maximum.accumulate(log_capital_at_exit)
+        drawdowns = cumulative_max - log_capital_at_exit
+        max_drawdown = np.max(drawdowns) if len(drawdowns) > 0 else 0
+    else:
+        volatility = 0.0
+        sharpe_ratio = float('nan')
+        max_drawdown = 0.0
 
     metrics = {
         "Volatility": volatility,

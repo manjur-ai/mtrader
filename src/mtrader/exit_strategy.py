@@ -10,6 +10,11 @@ except ImportError:
 from mtrader.monotonic_stack import monotonic_stack_for_value1_lessthan_value2, monotonic_stack_for_value1_gt_value2
 
 
+def _replace_missing_exit_indices(indices, last_index):
+    indices = np.asarray(indices, dtype=np.int64)
+    return np.where(indices < 0, last_index, indices)
+
+
 def precalculate_exit_time_amount_profit(
     df,
     conditions,
@@ -105,6 +110,7 @@ def precalculate_exit_time_amount_profit(
         else:
             raise ValueError("Invalid value for 'buy_or_sell'. It must be either 'buy' or 'sell'.")
 
+        target_index = _replace_missing_exit_indices(target_index, len(df) - 1)
         df["target_price"] = target_prices
         df["target_index"] = target_index
         df["next_exit_value_target"] = next_exit_value_target
@@ -127,6 +133,7 @@ def precalculate_exit_time_amount_profit(
                 stoploss_prices = close_prices - stoploss_delta
 
             stoploss_index = monotonic_stack_for_value1_lessthan_value2(values1, stoploss_prices)
+            stoploss_index = _replace_missing_exit_indices(stoploss_index, len(df) - 1)
 
             if stoploss_consider_slipage:
                 next_exit_value_stoploss = np.minimum(close_prices[stoploss_index], stoploss_prices)
@@ -138,10 +145,11 @@ def precalculate_exit_time_amount_profit(
                 values1 = close_prices
                 stoploss_prices = close_prices + stoploss_delta
             else:
-                values1 = low_prices
+                values1 = high_prices
                 stoploss_prices = close_prices + stoploss_delta
 
             stoploss_index = monotonic_stack_for_value1_gt_value2(values1, stoploss_prices)
+            stoploss_index = _replace_missing_exit_indices(stoploss_index, len(df) - 1)
 
             if stoploss_consider_slipage:
                 next_exit_value_stoploss = np.maximum(close_prices[stoploss_index], stoploss_prices)
