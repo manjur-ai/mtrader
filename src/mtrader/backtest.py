@@ -184,7 +184,7 @@ def trade_log(df, side=None, initial_capital=1000):
     out["exit_price"] = trades["next_exit_value"].to_numpy(dtype=np.float64)
     if side == "sell":
         out["profit"] = out["entry_price"] - out["exit_price"]
-        out["return_pct"] = (out["profit"] / out["exit_price"]) * 100.0
+        out["return_pct"] = (out["profit"] / out["entry_price"]) * 100.0
     else:
         out["profit"] = out["exit_price"] - out["entry_price"]
         out["return_pct"] = (out["profit"] / out["entry_price"]) * 100.0

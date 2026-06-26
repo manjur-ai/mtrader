@@ -176,7 +176,7 @@ def precalculate_exit_time_amount_profit(
     elif buy_or_sell == "sell":
         trading_cost = close_prices * trading_cost_factor
         next_exit_profit = close_prices - next_exit_value - trading_cost
-        next_exit_capital_multiplier_in_percent = 100.0 + (leverage * next_exit_profit * 100) / next_exit_value
+        next_exit_capital_multiplier_in_percent = 100.0 + (leverage * next_exit_profit * 100) / close_prices
     else:
         raise ValueError("Invalid value for 'buy_or_sell'. It must be either 'buy' or 'sell'.")
 

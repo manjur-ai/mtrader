@@ -52,6 +52,44 @@ def test_condition_cross_helpers_and_parameter_grid():
     assert grid[0]["side"] == "buy"
 
 
+def test_rsi_period_length_does_not_crash():
+    from mtrader import add_indicators
+
+    period = 14
+    df = _sample_df(days=1, bars=period)
+    out = add_indicators(df, add=["rsi"], rolling_minutes=[period])
+
+    assert f"can1_rsi_p{period}" in out.columns
+    assert out[f"can1_rsi_p{period}"].isna().all()
+
+
+def test_short_backtest_uses_entry_price_for_return_denominator():
+    from mtrader import condition, run_backtest
+
+    df = pd.DataFrame({
+        "datetime": pd.date_range("2024-01-02 09:15", periods=2, freq="min"),
+        "open": [100.0, 90.0],
+        "high": [101.0, 91.0],
+        "low": [99.0, 89.0],
+        "close": [100.0, 90.0],
+        "volume": [1000, 1000],
+        "entry_sig": [1.0, 0.0],
+        "exit_sig": [0.0, 1.0],
+        "zero": [0.0, 0.0],
+    })
+    result = run_backtest(
+        df,
+        entry_conditions=[[condition("entry_sig", "zero", lower=1)]],
+        exit_conditions=[[condition("exit_sig", "zero", lower=1)]],
+        buy_or_sell="sell",
+        trading_cost_factor=0.0,
+        initial_capital=1000.0,
+    )
+
+    assert np.isclose(result.trades.loc[0, "return_pct"], 10.0)
+    assert np.isclose(result.final_capital, 1100.0)
+
+
 def test_validate_ohlcv_catches_bad_data():
     from mtrader import validate_ohlcv
 

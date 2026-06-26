@@ -29,14 +29,14 @@ def _live_df_days(days=3, bars=35):
 
 
 def test_live_update_matches_batch_for_o1_indicators():
-    from mtrader import LiveIndicatorEngine, atr, ema
+    from mtrader import LiveIndicatorEngine, add_indicators, atr, ema
 
     df = _live_df(60)
     history = df.iloc[:-1]
     new_bar = df.iloc[-1]
     engine = LiveIndicatorEngine.from_history(
         history,
-        indicators=["sma", "ema", "atr", "vwap", "zero"],
+        indicators=["sma", "ema", "rsi", "atr", "vwap", "zero"],
         periods=[5, 14],
     )
     out = engine.update(new_bar)
@@ -45,6 +45,8 @@ def test_live_update_matches_batch_for_o1_indicators():
     assert np.isclose(out["can1_sma1_p5"], full["close"].tail(5).mean())
     assert np.isclose(out["can1_ema1_p14"], ema(full["close"].to_numpy(), 14)[-1])
     assert np.isclose(out["can1_atr_p14"], atr(full["high"].to_numpy(), full["low"].to_numpy(), full["close"].to_numpy(), 14)[-1])
+    batch = add_indicators(full.copy(), add=["rsi"], rolling_minutes=[14])
+    assert np.isclose(out["can1_rsi_p14"], batch["can1_rsi_p14"].iloc[-1])
 
     typical = (full["high"] + full["low"] + full["close"]) / 3.0
     expected_vwap = (typical * full["volume"]).sum() / full["volume"].sum()

@@ -125,6 +125,8 @@ def rsi(close: np.ndarray, period: int) -> np.ndarray:
     close = np.asarray(close, dtype=np.float64)
     n = len(close)
     out = np.full(n, np.nan, dtype=np.float64)
+    if period <= 0:
+        raise ValueError("period must be a positive integer")
     if n < 2:
         return out
     diffs = np.diff(close)
@@ -132,10 +134,10 @@ def rsi(close: np.ndarray, period: int) -> np.ndarray:
     losses = np.where(diffs < 0, -diffs, 0.0)
     cum_gain = np.cumsum(gains)
     cum_loss = np.cumsum(losses)
-    for i in range(period - 1, n):
-        if i == period - 1:
-            avg_gain = cum_gain[i] / period
-            avg_loss = cum_loss[i] / period
+    for i in range(period, n):
+        if i == period:
+            avg_gain = cum_gain[period - 1] / period
+            avg_loss = cum_loss[period - 1] / period
         else:
             avg_gain = (avg_gain * (period - 1) + gains[i - 1]) / period
             avg_loss = (avg_loss * (period - 1) + losses[i - 1]) / period
