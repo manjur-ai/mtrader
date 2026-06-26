@@ -367,6 +367,101 @@ def test_indicators_numerical():
     builtins.print("  indicators: all 6 functions produce finite output")
 
 
+def test_find_best_exit():
+    from mtrader import find_best_exit
+
+    df = _prepare_backtest_df()
+
+    entry_conditions = [[
+        {
+            "first_column_name": "can1_sma1_p5",
+            "second_column_name": "close",
+            "shift_down_first": 0,
+            "shift_down_second": 0,
+            "lower_range_of_difference": -np.inf,
+            "upper_range_of_difference": -30,
+            "perform_normalization_of_diff": False,
+        }
+    ]]
+
+    best_params, results_df = find_best_exit(
+        df,
+        entry_conditions=entry_conditions,
+        buy_or_sell="buy",
+        target_deltas=[50, 150],
+        stoploss_deltas=[25, 75],
+        leverage=1,
+        initial_capital=1000,
+        risk_free_rate=0.05,
+        metric="sharpe",
+        verbose=False,
+    )
+
+    assert best_params is not None
+    assert "target_delta" in best_params
+    assert "stoploss_delta" in best_params
+    assert isinstance(results_df, pd.DataFrame)
+    assert len(results_df) == 4
+    assert "sharpe" in results_df.columns
+
+    best_params_cap, results_df_cap = find_best_exit(
+        df,
+        entry_conditions=entry_conditions,
+        buy_or_sell="buy",
+        target_deltas=[50, 150],
+        stoploss_deltas=[25, 75],
+        metric="final_capital",
+    )
+
+    assert best_params_cap is not None
+    builtins.print(f"  find_best_exit (sharpe): best target={best_params['target_delta']}, "
+                   f"stoploss={best_params['stoploss_delta']}")
+    builtins.print(f"  find_best_exit (capital): best target={best_params_cap['target_delta']}, "
+                   f"stoploss={best_params_cap['stoploss_delta']}")
+
+
+def test_find_best_exit_normalized():
+    from mtrader import find_best_exit
+
+    df = _prepare_backtest_df()
+
+    entry_conditions = [[
+        {
+            "first_column_name": "close",
+            "second_column_name": "can1_sma1_p5",
+            "shift_down_first": 0,
+            "shift_down_second": 0,
+            "lower_range_of_difference": 20,
+            "upper_range_of_difference": np.inf,
+            "perform_normalization_of_diff": False,
+        }
+    ]]
+
+    best, results = find_best_exit(
+        df,
+        entry_conditions=entry_conditions,
+        buy_or_sell="sell",
+        target_deltas_normalized=[0.5, 1.0, 2.0],
+        stoploss_deltas_normalized=[0.25, 0.5],
+        metric="sharpe",
+    )
+
+    assert best is not None
+    assert best["target_delta_normalized"] is not None
+    assert len(results) == 6
+    builtins.print(f"  find_best_exit normalized: best t_norm={best['target_delta_normalized']}, "
+                   f"sl_norm={best['stoploss_delta_normalized']}")
+
+
+def test_find_best_exit_raises_on_empty():
+    from mtrader import find_best_exit
+    import pytest
+
+    df = _prepare_backtest_df()
+    with pytest.raises(ValueError, match="At least one"):
+        find_best_exit(df, entry_conditions=[[]], buy_or_sell="buy")
+
+
 if __name__ == "__main__":
     test_clean_data_roundtrip()
     test_add_indicators_basic()

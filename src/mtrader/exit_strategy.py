@@ -117,7 +117,6 @@ def precalculate_exit_time_amount_profit(
             stoploss_delta = stoploss_delta
 
         if buy_or_sell == "buy":
-            print(f"stoploss delta {stoploss_delta}")
             if stoploss_wait_candleclose:
                 values1 = close_prices
                 stoploss_prices = close_prices - stoploss_delta

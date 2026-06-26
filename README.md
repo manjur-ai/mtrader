@@ -90,6 +90,7 @@ take_trade_on_condition*()
 | `monotonic_stack` | `monotonic_stack_for_value1_gt_value2`, `monotonic_stack_for_value1_lessthan_value2` | Numba-accelerated next-index lookup for exit timing |
 | `exit_strategy` | `precalculate_exit_time_amount_profit` | Vectorized exit signal generation with target, stoploss, and condition-based exits |
 | `trading` | `take_trade_on_condition`, `take_trade_on_condition_numpy`, `take_trade_on_condition2`, `take_trade_on_condition3`, `take_trade_on_condition_vectorized`, `take_trade_on_condition_vectorized2`, `update_cond` | Trade execution engines — NumPy, CuPy, multi-range grid search, GPU-optimized variants |
+| `optimize_exit` | `find_best_exit` | Grid search over exit params (target, stoploss) to maximize Sharpe / capital |
 | `utils` | `printo`, `timenum` | Time-string conversion |
 
 ---
@@ -205,6 +206,34 @@ All return `(filtered_trades_df, final_capital, metrics_dict)` where metrics inc
 - `Volatility`
 - `Sharpe Ratio`
 - `Max Drawdown`
+
+---
+
+## Exit optimization
+
+Given a fixed entry condition, `find_best_exit()` grid-searches over exit parameters to maximize Sharpe, final capital, or any other metric.
+
+```python
+from mtrader import find_best_exit
+
+best_params, results_df = find_best_exit(
+    df,
+    entry_conditions=entry_conditions,
+    buy_or_sell="buy",
+    target_deltas=[50, 100, 150, 200, 300],
+    stoploss_deltas=[25, 50, 75, 100],
+    metric="sharpe",           # or "final_capital", "max_drawdown"
+    risk_free_rate=0.05,
+)
+
+print(best_params)
+# {'target_delta': 150, 'stoploss_delta': 75, ...}
+
+# Full grid in results_df:
+#   target_delta | stoploss_delta | trades | final_capital | sharpe | volatility | max_drawdown
+```
+
+Works with absolute deltas, normalized (% of price) deltas, and custom exit conditions. Set `verbose=True` to see each combination's results as they run.
 
 ---
 

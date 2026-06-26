@@ -16,6 +16,7 @@ from mtrader.trading import (
     take_trade_on_condition_vectorized2,
     update_cond,
 )
+from mtrader.optimize_exit import find_best_exit
 
 __all__ = [
     "printo", "print", "timenum",
@@ -29,4 +30,5 @@ __all__ = [
     "calculate_difference_for_columns", "take_trade_on_condition2_for_all_ranges",
     "take_trade_on_condition_vectorized", "take_trade_on_condition_vectorized2",
     "update_cond",
+    "find_best_exit",
 ]
