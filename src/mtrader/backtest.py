@@ -1,19 +1,22 @@
+from __future__ import annotations
 from dataclasses import dataclass
 from itertools import product
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 
 def condition(
-    first,
-    second="zero",
-    lower=-np.inf,
-    upper=np.inf,
-    shift_first=0,
-    shift_second=0,
-    normalize=False,
-):
+    first: str,
+    second: str = "zero",
+    lower: float = -np.inf,
+    upper: float = np.inf,
+    shift_first: int = 0,
+    shift_second: int = 0,
+    normalize: bool = False,
+) -> dict[str, Any]:
+    """Create a single condition dict: compares (first shifted by shift_first) - (second shifted by shift_second) against [lower, upper]."""
     return {
         "first_column_name": first,
         "second_column_name": second,
@@ -25,7 +28,8 @@ def condition(
     }
 
 
-def cross_above(first, second, include_equal=True):
+def cross_above(first: str, second: str, include_equal: bool = True) -> list[dict[str, Any]]:
+    """Generate two conditions that detect when `first` crosses above `second`: prior diff <= 0 and current diff >= 0."""
     prior_upper = 0 if include_equal else -np.finfo(float).eps
     current_lower = 0 if include_equal else np.finfo(float).eps
     return [
@@ -34,7 +38,8 @@ def cross_above(first, second, include_equal=True):
     ]
 
 
-def cross_below(first, second, include_equal=True):
+def cross_below(first: str, second: str, include_equal: bool = True) -> list[dict[str, Any]]:
+    """Generate two conditions that detect when `first` crosses below `second`: prior diff >= 0 and current diff <= 0."""
     prior_lower = 0 if include_equal else np.finfo(float).eps
     current_upper = 0 if include_equal else -np.finfo(float).eps
     return [
@@ -43,7 +48,8 @@ def cross_below(first, second, include_equal=True):
     ]
 
 
-def validate_ohlcv(df, require_volume=False):
+def validate_ohlcv(df: pd.DataFrame, require_volume: bool = False) -> bool:
+    """Validate that a DataFrame has proper OHLCV columns: datetime (sorted, unique), open/high/low/close numeric, no NaNs, and valid ranges."""
     required = {"datetime", "open", "high", "low", "close"}
     if require_volume:
         required.add("volume")
@@ -81,11 +87,12 @@ class BacktestResult:
     df: pd.DataFrame
     trades: pd.DataFrame
     final_capital: float
-    metrics: dict
-    report: dict
+    metrics: dict[str, Any]
+    report: dict[str, Any]
     equity: pd.DataFrame
 
-    def to_html(self, output_path=None, title="mtrader Backtest Report", strategy_name=None, parameters=None):
+    def to_html(self: BacktestResult, output_path: str | None = None, title: str = "mtrader Backtest Report", strategy_name: str | None = None, parameters: dict[str, Any] | None = None) -> str:
+        """Generate an HTML report from this BacktestResult. Delegates to html_backtest_report."""
         from mtrader.report import html_backtest_report
 
         return html_backtest_report(
@@ -98,26 +105,46 @@ class BacktestResult:
 
 
 def run_backtest(
-    df,
-    entry_conditions,
-    buy_or_sell="buy",
-    exit_conditions=None,
-    indicators=None,
-    rolling_minutes=None,
-    target_delta=None,
-    stoploss_delta=None,
-    target_delta_normalized=None,
-    stoploss_delta_normalized=None,
-    target_delta_column=None,
-    stoploss_delta_column=None,
-    initial_capital=1000,
-    leverage=1,
-    risk_free_rate=0,
-    trading_cost_factor=0.0002,
-    stoploss_wait_candleclose=False,
-    stoploss_consider_slipage=True,
-    copy=True,
-):
+    df: pd.DataFrame,
+    entry_conditions: list[list[dict[str, Any]]],
+    buy_or_sell: str = "buy",
+    exit_conditions: list[list[dict[str, Any]]] | None = None,
+    indicators: list[str] | None = None,
+    rolling_minutes: list[int] | None = None,
+    target_delta: float | None = None,
+    stoploss_delta: float | None = None,
+    target_delta_normalized: float | None = None,
+    stoploss_delta_normalized: float | None = None,
+    target_delta_column: str | None = None,
+    stoploss_delta_column: str | None = None,
+    initial_capital: float = 1000,
+    leverage: float = 1,
+    risk_free_rate: float = 0,
+    trading_cost_factor: float = 0.0002,
+    stoploss_wait_candleclose: bool = False,
+    stoploss_consider_slipage: bool = True,
+    copy: bool = True,
+) -> BacktestResult:
+    """Run a complete backtest: validate, add indicators, pre-calculate exits, execute trades, and return a BacktestResult with report/equity/trade_log."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        raise ValueError("df must be a non-empty DataFrame")
+    required_ohlcv = {"datetime", "open", "high", "low", "close"}
+    missing = sorted(required_ohlcv - set(df.columns))
+    if missing:
+        raise ValueError(f"DataFrame missing required OHLCV columns: {missing}")
+    if not isinstance(entry_conditions, list) or len(entry_conditions) == 0:
+        raise ValueError("entry_conditions must be a non-empty list")
+    if buy_or_sell not in ("buy", "sell"):
+        raise ValueError(f"buy_or_sell must be 'buy' or 'sell', got '{buy_or_sell}'")
+    if rolling_minutes is not None:
+        if not isinstance(rolling_minutes, list):
+            raise ValueError("rolling_minutes must be a list if provided")
+        for i, rm in enumerate(rolling_minutes):
+            if not isinstance(rm, int) or rm <= 0:
+                raise ValueError(f"rolling_minutes[{i}] must be a positive integer, got {rm}")
+    if indicators is not None and not isinstance(indicators, list):
+        raise ValueError("indicators must be a list if provided")
+
     from mtrader.exit_strategy import precalculate_exit_time_amount_profit
     from mtrader.indicator_engine import add_indicators
     from mtrader.report import backtest_report, equity_curve
@@ -161,7 +188,8 @@ def run_backtest(
     return BacktestResult(data, log, float(final_capital), metrics, report, equity)
 
 
-def trade_log(df, side=None, initial_capital=1000):
+def trade_log(df: pd.DataFrame, side: str | None = None, initial_capital: float = 1000) -> pd.DataFrame:
+    """Extract a trade-by-trade log from backtest results: entry/exit times, prices, profit, return %, and capital progression."""
     required = {"take_trade", "next_exit_datetime", "next_exit_value", "capital_at_exit", "close"}
     missing = sorted(required - set(df.columns))
     if missing:
@@ -194,7 +222,8 @@ def trade_log(df, side=None, initial_capital=1000):
     return out.reset_index(drop=True)
 
 
-def walk_forward_splits(df, train_days, test_days, step_days=None):
+def walk_forward_splits(df: pd.DataFrame, train_days: int, test_days: int, step_days: int | None = None) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Generate train/test index pairs for walk-forward analysis. Splits by unique trading days. Returns list of (train_idx, test_idx) tuples."""
     if train_days <= 0 or test_days <= 0:
         raise ValueError("train_days and test_days must be positive")
     step_days = test_days if step_days is None else step_days
@@ -217,7 +246,8 @@ def walk_forward_splits(df, train_days, test_days, step_days=None):
     return splits
 
 
-def parameter_grid(**params):
+def parameter_grid(**params: Any) -> list[dict[str, Any]]:
+    """Build a Cartesian product of parameter lists, returning a list of dicts. Scalar values are wrapped in a single-element list."""
     keys = list(params)
     values = [v if isinstance(v, (list, tuple, np.ndarray, pd.Index)) else [v] for v in params.values()]
     return [dict(zip(keys, combo)) for combo in product(*values)]

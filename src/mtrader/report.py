@@ -1,10 +1,12 @@
+from __future__ import annotations
 import numpy as np
 import pandas as pd
 from html import escape
 from pathlib import Path
+from typing import Any
 
 
-def _compute_trade_returns(df, initial_capital=1000):
+def _compute_trade_returns(df: pd.DataFrame, initial_capital: float = 1000) -> tuple[np.ndarray, np.ndarray, float]:
     take_idx = np.where(df["take_trade"].to_numpy())[0]
     if len(take_idx) == 0:
         return np.array([]), np.array([]), initial_capital
@@ -16,7 +18,8 @@ def _compute_trade_returns(df, initial_capital=1000):
     return trade_caps, trade_returns, trade_caps[-1]
 
 
-def backtest_report(df, initial_capital=1000, risk_free_rate=0.05):
+def backtest_report(df: pd.DataFrame, initial_capital: float = 1000, risk_free_rate: float = 0.05) -> dict[str, Any]:
+    """Compute a comprehensive backtest report: total trades, returns, Sharpe/Sortino/Calmar ratios, max drawdown, win rate, profit factor, etc."""
     if "take_trade" not in df.columns or "capital_at_exit" not in df.columns:
         raise ValueError("DataFrame must have 'take_trade' and 'capital_at_exit' columns. "
                          "Run precalculate_exit_time_amount_profit and take_trade_on_condition first.")
@@ -89,7 +92,8 @@ def backtest_report(df, initial_capital=1000, risk_free_rate=0.05):
     return report
 
 
-def equity_curve(df, initial_capital=1000):
+def equity_curve(df: pd.DataFrame, initial_capital: float = 1000) -> pd.DataFrame:
+    """Build an equity curve DataFrame with datetime, equity, drawdown_pct, and trade boolean columns."""
     if "take_trade" not in df.columns or "capital_at_exit" not in df.columns:
         raise ValueError("DataFrame must have 'take_trade' and 'capital_at_exit' columns.")
 
@@ -108,15 +112,16 @@ def equity_curve(df, initial_capital=1000):
 
 
 def html_backtest_report(
-    backtest,
-    output_path=None,
-    title="mtrader Backtest Report",
-    strategy_name=None,
-    parameters=None,
-    initial_capital=1000,
-    risk_free_rate=0.05,
-    max_trades=50,
-):
+    backtest: Any,
+    output_path: str | None = None,
+    title: str = "mtrader Backtest Report",
+    strategy_name: str | None = None,
+    parameters: dict[str, Any] | None = None,
+    initial_capital: float = 1000,
+    risk_free_rate: float = 0.05,
+    max_trades: int = 50,
+) -> str:
+    """Generate a complete HTML backtest report with metric cards, equity/drawdown charts, trade log, monthly returns, and drawdown periods. Writes to output_path if given. Returns the HTML string."""
     df = getattr(backtest, "df", backtest)
     report = getattr(backtest, "report", None)
     if report is None:
@@ -148,7 +153,7 @@ def html_backtest_report(
     return html
 
 
-def _render_html_report(title, strategy_name, report, equity, trades, parameters, max_trades):
+def _render_html_report(title: str, strategy_name: str, report: dict[str, Any], equity: pd.DataFrame, trades: pd.DataFrame, parameters: dict[str, Any], max_trades: int) -> str:
     generated_at = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
     cards = [
         ("Final Capital", _money(report.get("final_capital")), "ending account value"),
@@ -359,7 +364,7 @@ def _render_html_report(title, strategy_name, report, equity, trades, parameters
 """
 
 
-def _parameters_table(parameters):
+def _parameters_table(parameters: dict[str, Any]) -> str:
     if not parameters:
         return '<div class="empty">No parameters supplied.</div>'
     rows = []
@@ -370,7 +375,7 @@ def _parameters_table(parameters):
     return "<table><tbody>" + "\n".join(rows) + "</tbody></table>"
 
 
-def _trades_table(trades, max_trades):
+def _trades_table(trades: pd.DataFrame, max_trades: int) -> str:
     if trades is None or trades.empty:
         return '<div class="empty">No trades were generated.</div>'
     cols = [
@@ -395,7 +400,7 @@ def _trades_table(trades, max_trades):
     return f"<table><thead><tr>{head}</tr></thead><tbody>{''.join(rows)}</tbody></table>{note}"
 
 
-def _monthly_returns_table(equity):
+def _monthly_returns_table(equity: pd.DataFrame) -> str:
     if "datetime" not in equity.columns or equity.empty:
         return '<div class="empty">No monthly return data available.</div>'
     data = equity[["datetime", "equity"]].copy()
@@ -413,7 +418,7 @@ def _monthly_returns_table(equity):
     return "<table><thead><tr><th>Month</th><th>Return</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
 
 
-def _drawdown_periods_table(equity, limit=5):
+def _drawdown_periods_table(equity: pd.DataFrame, limit: int = 5) -> str:
     if equity.empty or "drawdown_pct" not in equity.columns:
         return '<div class="empty">No drawdown data available.</div>'
     dd = equity["drawdown_pct"].to_numpy(dtype=np.float64)
@@ -445,7 +450,7 @@ def _drawdown_periods_table(equity, limit=5):
     )
 
 
-def _best_worst_trades_table(trades):
+def _best_worst_trades_table(trades: pd.DataFrame) -> str:
     if trades is None or trades.empty or "capital_return_pct" not in trades.columns:
         return '<div class="empty">No trade ranking available.</div>'
     ranked = pd.concat([
@@ -467,7 +472,7 @@ def _best_worst_trades_table(trades):
     return "<table><thead><tr><th>Entry</th><th>Exit</th><th>Return</th><th>Capital</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
 
 
-def _trade_distribution_svg(trades):
+def _trade_distribution_svg(trades: pd.DataFrame) -> str:
     if trades is None or trades.empty:
         return '<div class="empty">No trade distribution available.</div>'
     col = "capital_return_pct" if "capital_return_pct" in trades.columns else "return_pct"
@@ -498,15 +503,15 @@ def _trade_distribution_svg(trades):
     """
 
 
-def _line_chart_svg(values, stroke, fill, label):
+def _line_chart_svg(values: np.ndarray, stroke: str, fill: str, label: str) -> str:
     return _chart_svg(values, stroke=stroke, fill=fill, label=label, area=False)
 
 
-def _area_chart_svg(values, stroke, fill, label):
+def _area_chart_svg(values: np.ndarray, stroke: str, fill: str, label: str) -> str:
     return _chart_svg(values, stroke=stroke, fill=fill, label=label, area=True)
 
 
-def _chart_svg(values, stroke, fill, label, area):
+def _chart_svg(values: np.ndarray, stroke: str, fill: str, label: str, area: bool) -> str:
     values = np.asarray(values, dtype=np.float64)
     values = values[np.isfinite(values)]
     width, height, pad = 900, 260, 24
@@ -546,19 +551,19 @@ def _chart_svg(values, stroke, fill, label, area):
     """
 
 
-def _money(value):
+def _money(value: Any) -> str:
     if value is None or pd.isna(value):
         return "-"
     return f"{float(value):,.2f}"
 
 
-def _pct(value):
+def _pct(value: Any) -> str:
     if value is None or pd.isna(value):
         return "-"
     return f"{float(value):,.2f}%"
 
 
-def _value(value):
+def _value(value: Any) -> str:
     if value is None or pd.isna(value):
         return "-"
     if isinstance(value, (int, np.integer)):
@@ -566,13 +571,13 @@ def _value(value):
     return f"{float(value):,.3f}".rstrip("0").rstrip(".")
 
 
-def _format_number(value):
+def _format_number(value: float) -> str:
     if abs(value) >= 1000:
         return f"{value:,.0f}"
     return f"{value:,.2f}"
 
 
-def _format_cell(value, col):
+def _format_cell(value: Any, col: str) -> str:
     if pd.isna(value):
         return "-"
     if "time" in col:
@@ -587,18 +592,18 @@ def _format_cell(value, col):
     return str(value)
 
 
-def _date_at(equity, index):
+def _date_at(equity: pd.DataFrame, index: int) -> str:
     if "datetime" not in equity.columns:
         return str(index)
     return pd.Timestamp(equity["datetime"].iloc[index]).strftime("%Y-%m-%d")
 
 
-def _short_value(value):
+def _short_value(value: Any) -> str:
     text = str(value)
     return text if len(text) <= 120 else text[:117] + "..."
 
 
-def _max_consecutive(condition):
+def _max_consecutive(condition: np.ndarray) -> int:
     if len(condition) == 0:
         return 0
     diffs = np.diff(np.concatenate([[False], condition, [False]]).astype(int))

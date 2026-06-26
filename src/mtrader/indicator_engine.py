@@ -1,11 +1,14 @@
+from __future__ import annotations
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
+from typing import Any
 from mtrader.indicators import ema, evol, wma, wvol, ssma, ssvol, rsi, atr
 from mtrader.indicators import stoch_k, stoch_d, bollinger_b, obv, macd, willr, cci, adx, mfi, psar, heikin_ashi
 from mtrader.indicators import supertrend, ichimoku, inside_bar, bullish_engulfing, bearish_engulfing
 
 
-FEATURE_CODE = {
+FEATURE_CODE: dict[str, str] = {
     "0":  "close",
     "1":  "close",
     "2":  "av2",
@@ -43,11 +46,11 @@ FEATURE_CODE = {
     "34": "lret60",
 }
 
-BASE_CODES_ORDERED = sorted(FEATURE_CODE.keys(), key=len, reverse=True)
-BASE_NAMES_ORDERED = sorted(FEATURE_CODE.values(), key=len, reverse=True)
+BASE_CODES_ORDERED: list[str] = sorted(FEATURE_CODE.keys(), key=len, reverse=True)
+BASE_NAMES_ORDERED: list[str] = sorted(FEATURE_CODE.values(), key=len, reverse=True)
 
 
-def add_indicators(df, add, rolling_minutes=None, days_back=None):
+def add_indicators(df: pd.DataFrame, add: list[str], rolling_minutes: list[int] | None = None, days_back: list[int] | None = None) -> pd.DataFrame:
     if rolling_minutes is None:
         rolling_minutes = []
     if days_back is None:
@@ -539,7 +542,7 @@ def add_indicators(df, add, rolling_minutes=None, days_back=None):
                 df[f'can1_{metric}_p{rolling_minute}'] = group[col].rolling(window=rolling_minute, min_periods=1).mean().reset_index(level=0, drop=True)
 
         if "or_high" in add or "or_low" in add:
-            def _opening_range_expanding(g):
+            def _opening_range_expanding(g: pd.DataFrame) -> pd.DataFrame:
                 first_n = g.head(rolling_minute)
                 if "or_high" in add:
                     g[f'can1_or_high_p{rolling_minute}'] = first_n['high'].cummax()
@@ -659,7 +662,7 @@ def add_indicators(df, add, rolling_minutes=None, days_back=None):
     return df
 
 
-def add_indicators_on_group(df, group_minutes, ma=None, atr=None):
+def add_indicators_on_group(df: pd.DataFrame, group_minutes: list[int], ma: list[int] | None = None, atr: list[int] | None = None) -> pd.DataFrame:
     if not all(isinstance(minute, int) and minute > 0 for minute in group_minutes):
         raise ValueError("All group_minutes must be positive integers.")
     if not {'open', 'high', 'low', 'close'}.issubset(df.columns):

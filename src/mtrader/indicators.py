@@ -38,7 +38,7 @@ def _rolling_minmax(values: np.ndarray, period: int, find_max: bool) -> np.ndarr
 
 
 def ema(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
-    source_numpy = np.asarray(source_numpy, dtype=np.float64)
+    """Exponential Moving Average. EMA = (prev * (p-1) + value * 2) / (p+1) where p = period."""
     n = len(source_numpy)
     ema_values = np.zeros(n, dtype=np.float64)
 
@@ -56,6 +56,7 @@ def ema(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
 
 
 def evol(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
+    """Exponential volatility: sqrt(EMA of squared deviations from EMA)."""
     source_numpy = np.asarray(source_numpy, dtype=np.float64)
     ema_values = ema(source_numpy, rolling_minute)
     sq_dev = (source_numpy - ema_values) ** 2
@@ -64,7 +65,7 @@ def evol(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
 
 
 def wma(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
-    source_numpy = np.asarray(source_numpy, dtype=np.float64)
+    """Weighted Moving Average with linearly decreasing weights over the period."""
     n = len(source_numpy)
     cumsum = np.cumsum(source_numpy, dtype=np.float64)
     weights_sum = rolling_minute * (rolling_minute + 1) / 2.0
@@ -90,6 +91,7 @@ def wma(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
 
 
 def wvol(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
+    """Weighted volatility: sqrt(WMA of squared deviations from WMA)."""
     source_numpy = np.asarray(source_numpy, dtype=np.float64)
     wma_values = wma(source_numpy, rolling_minute)
     sq_dev = (source_numpy - wma_values) ** 2
@@ -98,7 +100,7 @@ def wvol(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
 
 
 def ssma(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
-    source_numpy = np.asarray(source_numpy, dtype=np.float64)
+    """Simple Smoothed Moving Average (equivalent to Wilder's smoothing)."""
     n = len(source_numpy)
     ssma_values = np.zeros(n, dtype=np.float64)
 
@@ -114,6 +116,7 @@ def ssma(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
 
 
 def ssvol(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
+    """Smoothed volatility: sqrt(SSMA of squared deviations from SSMA)."""
     source_numpy = np.asarray(source_numpy, dtype=np.float64)
     ssma_values = ssma(source_numpy, rolling_minute)
     sq_dev = (source_numpy - ssma_values) ** 2
@@ -122,7 +125,7 @@ def ssvol(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
 
 
 def rsi(close: np.ndarray, period: int) -> np.ndarray:
-    close = np.asarray(close, dtype=np.float64)
+    """Relative Strength Index. RSI = 100 - 100 / (1 + avg_gain / avg_loss) over the given period."""
     n = len(close)
     out = np.full(n, np.nan, dtype=np.float64)
     if period <= 0:
@@ -149,7 +152,7 @@ def rsi(close: np.ndarray, period: int) -> np.ndarray:
 
 
 def atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -> np.ndarray:
-    high = np.asarray(high, dtype=np.float64)
+    """Average True Range. Mean of True Range (max of high-low, |high-prev_close|, |low-prev_close|) over the period."""
     low = np.asarray(low, dtype=np.float64)
     close = np.asarray(close, dtype=np.float64)
     n = len(close)
@@ -166,7 +169,7 @@ def atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -> np
 
 
 def stoch_k(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -> np.ndarray:
-    high = np.asarray(high, dtype=np.float64)
+    """Stochastic %K. %K = 100 * (close - lowest_low) / (highest_high - lowest_low)."""
     low = np.asarray(low, dtype=np.float64)
     close = np.asarray(close, dtype=np.float64)
     hh = _rolling_minmax(high, period, find_max=True)
@@ -178,12 +181,13 @@ def stoch_k(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -
 
 
 def stoch_d(k_values: np.ndarray, period: int = 3) -> np.ndarray:
+    """Stochastic %D (signal line) — simple moving average of %K over the given period."""
     k = np.asarray(k_values, dtype=np.float64)
     return _rolling_mean_strict(k, period)
 
 
 def bollinger_b(close: np.ndarray, period: int, k: float = 2.0) -> np.ndarray:
-    close = np.asarray(close, dtype=np.float64)
+    """Bollinger Band %B. %B = (close - lower) / (upper - lower) where upper/lower = SMA ± k * sigma."""
     n = len(close)
     out = np.full(n, np.nan, dtype=np.float64)
     if period <= 0:
@@ -207,7 +211,7 @@ def bollinger_b(close: np.ndarray, period: int, k: float = 2.0) -> np.ndarray:
 
 
 def obv(close: np.ndarray, volume: np.ndarray) -> np.ndarray:
-    close = np.asarray(close, dtype=np.float64)
+    """On-Balance Volume. Cumulative volume added on up-close days, subtracted on down-close days."""
     volume = np.asarray(volume, dtype=np.float64)
     n = len(close)
     out = np.zeros(n, dtype=np.float64)
@@ -223,6 +227,7 @@ def obv(close: np.ndarray, volume: np.ndarray) -> np.ndarray:
 
 
 def macd(close: np.ndarray, fast: int = 12, slow: int = 26, signal: int = 9):
+    """MACD. MACD line = EMA_fast - EMA_slow; signal line = EMA of MACD line; histogram = MACD - signal."""
     close = np.asarray(close, dtype=np.float64)
     from mtrader.indicators import ema
     macd_line = ema(close, fast) - ema(close, slow)
@@ -232,7 +237,7 @@ def macd(close: np.ndarray, fast: int = 12, slow: int = 26, signal: int = 9):
 
 
 def willr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> np.ndarray:
-    high = np.asarray(high, dtype=np.float64)
+    """Williams %R. %R = -100 * (highest_high - close) / (highest_high - lowest_low)."""
     low = np.asarray(low, dtype=np.float64)
     close = np.asarray(close, dtype=np.float64)
     hh = _rolling_minmax(high, period, find_max=True)
@@ -244,7 +249,7 @@ def willr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14
 
 
 def cci(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 20) -> np.ndarray:
-    high = np.asarray(high, dtype=np.float64)
+    """Commodity Channel Index. CCI = (TP - SMA(TP)) / (0.015 * mean_absolute_deviation)."""
     low = np.asarray(low, dtype=np.float64)
     close = np.asarray(close, dtype=np.float64)
     n = len(close)
@@ -259,7 +264,7 @@ def cci(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 20) 
 
 
 def adx(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> np.ndarray:
-    high = np.asarray(high, dtype=np.float64)
+    """Average Directional Index. ADX = 100 * |PDI - NDI| / (PDI + NDI). Measures trend strength."""
     low = np.asarray(low, dtype=np.float64)
     close = np.asarray(close, dtype=np.float64)
     n = len(close)
@@ -291,7 +296,7 @@ def adx(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) 
 
 
 def mfi(high: np.ndarray, low: np.ndarray, close: np.ndarray, volume: np.ndarray, period: int = 14) -> np.ndarray:
-    high = np.asarray(high, dtype=np.float64)
+    """Money Flow Index. MFI = 100 - 100 / (1 + money_flow_ratio). Volume-weighted RSI analogue."""
     low = np.asarray(low, dtype=np.float64)
     close = np.asarray(close, dtype=np.float64)
     volume = np.asarray(volume, dtype=np.float64)
@@ -315,6 +320,7 @@ def mfi(high: np.ndarray, low: np.ndarray, close: np.ndarray, volume: np.ndarray
 
 
 def supertrend(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 10, multiplier: float = 3.0):
+    """Supertrend indicator. Returns (supertrend_line, direction) where direction is 1 (up) or -1 (down)."""
     high = np.asarray(high, dtype=np.float64)
     low = np.asarray(low, dtype=np.float64)
     close = np.asarray(close, dtype=np.float64)
@@ -359,6 +365,7 @@ def supertrend(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int
 
 
 def ichimoku(high: np.ndarray, low: np.ndarray, close: np.ndarray, tenkan: int = 9, kijun: int = 26, senkou_b: int = 52):
+    """Ichimoku Kinko Hyo. Returns (tenkan, kijun, senkou_span_a, senkou_span_b, chikou)."""
     high = np.asarray(high, dtype=np.float64)
     low = np.asarray(low, dtype=np.float64)
     close = np.asarray(close, dtype=np.float64)
@@ -373,7 +380,7 @@ def ichimoku(high: np.ndarray, low: np.ndarray, close: np.ndarray, tenkan: int =
 
 
 def inside_bar(high: np.ndarray, low: np.ndarray) -> np.ndarray:
-    high = np.asarray(high, dtype=np.float64)
+    """Detect inside bars: 1 where current bar's high <= prior high and low >= prior low, else 0."""
     low = np.asarray(low, dtype=np.float64)
     out = np.zeros(len(high), dtype=np.float64)
     if len(high) > 1:
@@ -382,7 +389,7 @@ def inside_bar(high: np.ndarray, low: np.ndarray) -> np.ndarray:
 
 
 def bullish_engulfing(open_p: np.ndarray, close: np.ndarray) -> np.ndarray:
-    open_p = np.asarray(open_p, dtype=np.float64)
+    """Detect bullish engulfing patterns: 1 where a bearish bar is followed by a larger bullish bar, else 0."""
     close = np.asarray(close, dtype=np.float64)
     out = np.zeros(len(close), dtype=np.float64)
     if len(close) > 1:
@@ -394,7 +401,7 @@ def bullish_engulfing(open_p: np.ndarray, close: np.ndarray) -> np.ndarray:
 
 
 def bearish_engulfing(open_p: np.ndarray, close: np.ndarray) -> np.ndarray:
-    open_p = np.asarray(open_p, dtype=np.float64)
+    """Detect bearish engulfing patterns: 1 where a bullish bar is followed by a larger bearish bar, else 0."""
     close = np.asarray(close, dtype=np.float64)
     out = np.zeros(len(close), dtype=np.float64)
     if len(close) > 1:
@@ -406,7 +413,7 @@ def bearish_engulfing(open_p: np.ndarray, close: np.ndarray) -> np.ndarray:
 
 
 def psar(high: np.ndarray, low: np.ndarray, af: float = 0.02, max_af: float = 0.2) -> np.ndarray:
-    high = np.asarray(high, dtype=np.float64)
+    """Parabolic SAR. Calculates trailing stop levels using acceleration factor (af) and extreme points."""
     low = np.asarray(low, dtype=np.float64)
     n = len(high)
     out = np.full(n, np.nan, dtype=np.float64)
@@ -447,6 +454,7 @@ def psar(high: np.ndarray, low: np.ndarray, af: float = 0.02, max_af: float = 0.
 
 
 def heikin_ashi(open_p: np.ndarray, high: np.ndarray, low: np.ndarray, close: np.ndarray):
+    """Heikin-Ashi candles. Returns (ha_open, ha_high, ha_low, ha_close) using averaged price calculations."""
     open_p = np.asarray(open_p, dtype=np.float64)
     high = np.asarray(high, dtype=np.float64)
     low = np.asarray(low, dtype=np.float64)

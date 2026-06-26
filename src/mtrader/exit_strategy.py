@@ -1,5 +1,8 @@
+from __future__ import annotations
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
+from typing import Any
 
 try:
     import cupy as cp
@@ -10,28 +13,29 @@ except ImportError:
 from mtrader.monotonic_stack import monotonic_stack_for_value1_lessthan_value2, monotonic_stack_for_value1_gt_value2
 
 
-def _replace_missing_exit_indices(indices, last_index):
+def _replace_missing_exit_indices(indices: NDArray[np.int64] | NDArray[np.int32], last_index: int) -> NDArray[np.int64]:
     indices = np.asarray(indices, dtype=np.int64)
     return np.where(indices < 0, last_index, indices)
 
 
 def precalculate_exit_time_amount_profit(
-    df,
-    conditions,
-    buy_or_sell,
-    trading_cost_factor=0.0002,
-    leverage=1,
-    target_delta=None,
-    stoploss_delta=None,
-    target_delta_normalized=None,
-    stoploss_delta_normalized=None,
-    target_delta_column=None,
-    stoploss_delta_column=None,
-    stoploss_wait_candleclose=False,
-    stoploss_consider_slipage=True,
-    stoploss_consider_slippage=None,
-    cupy=False
-):
+    df: pd.DataFrame,
+    conditions: list[list[dict[str, Any]]],
+    buy_or_sell: str,
+    trading_cost_factor: float = 0.0002,
+    leverage: float = 1,
+    target_delta: float | None = None,
+    stoploss_delta: float | None = None,
+    target_delta_normalized: float | None = None,
+    stoploss_delta_normalized: float | None = None,
+    target_delta_column: str | None = None,
+    stoploss_delta_column: str | None = None,
+    stoploss_wait_candleclose: bool = False,
+    stoploss_consider_slipage: bool = True,
+    stoploss_consider_slippage: bool | None = None,
+    cupy: bool = False
+) -> pd.DataFrame:
+    """Pre-calculate exit index, exit value, trading cost, profit, and capital multiplier for every bar based on conditions, target, and stoploss. Adds columns: next_exit_index, next_exit_value, next_exit_profit, next_exit_capital_multiplier_in_percent, etc."""
     if stoploss_consider_slippage is not None:
         stoploss_consider_slipage = stoploss_consider_slippage
     array_lib = cp if (cupy and has_cupy) else np

@@ -1,6 +1,8 @@
+from __future__ import annotations
 import numpy as np
 import pandas as pd
 from itertools import product
+from typing import Any
 
 try:
     import cupy as cp
@@ -8,7 +10,8 @@ try:
 except ImportError:
     has_cupy = False
 
-def take_trade_on_condition(df, conditions, cupy=False, leverage=1, initial_capital=1000, risk_free_rate=0):
+def take_trade_on_condition(df: pd.DataFrame, conditions: list[list[dict[str, Any]]], cupy: bool = False, leverage: float = 1, initial_capital: float = 1000, risk_free_rate: float = 0) -> tuple[pd.DataFrame, float, dict[str, Any]]:
+    """Evaluate entry conditions and compute trade entries, capital progression, and metrics (Sharpe, drawdown). Supports optional CuPy acceleration."""
     if cupy and has_cupy:
         array_lib = cp
     else:
@@ -80,7 +83,24 @@ def take_trade_on_condition(df, conditions, cupy=False, leverage=1, initial_capi
     return df_filtered, final_capital, metrics
 
 
-def take_trade_on_condition_numpy(df, conditions, leverage=1, initial_capital=1000, risk_free_rate=0):
+def take_trade_on_condition_numpy(df: pd.DataFrame, conditions: list[list[dict[str, Any]]], leverage: float = 1, initial_capital: float = 1000, risk_free_rate: float = 0) -> tuple[pd.DataFrame, float, dict[str, Any]]:
+    """NumPy-only entry evaluation (no CuPy). Validates inputs, finds first-occurrence trades, computes cumulative capital and metrics."""
+    if not isinstance(conditions, list) or len(conditions) == 0:
+        raise ValueError("conditions must be a non-empty list of condition groups")
+    for i, group in enumerate(conditions):
+        if not isinstance(group, list) or len(group) == 0:
+            raise ValueError(f"conditions[{i}] must be a non-empty list of conditions")
+    required_cols = ['next_exit_index', 'next_exit_capital_multiplier_in_percent']
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"DataFrame missing required columns: {missing}")
+    if leverage <= 0:
+        raise ValueError(f"leverage must be > 0, got {leverage}")
+    if initial_capital <= 0:
+        raise ValueError(f"initial_capital must be > 0, got {initial_capital}")
+    if not isinstance(risk_free_rate, (int, float)):
+        raise ValueError(f"risk_free_rate must be a number, got {type(risk_free_rate).__name__}")
+
     condition_met_all = np.ones(len(df), dtype=bool)
     for condition_group in conditions:
         condition_met_group = np.ones(len(df), dtype=bool)
@@ -140,10 +160,10 @@ def take_trade_on_condition_numpy(df, conditions, leverage=1, initial_capital=10
 
     return df_filtered, final_capital, metrics
 
-
 def take_trade_on_condition2(
-    df_cupy, conditions, leverage=1, initial_capital=1000, risk_free_rate=0, calculation_start_index=0
-):
+    df_cupy: dict[str, cp.ndarray], conditions: list[list[dict[str, Any]]], leverage: float = 1, initial_capital: float = 1000, risk_free_rate: float = 0, calculation_start_index: int = 0
+) -> tuple[dict[str, cp.ndarray] | None, float | None, dict[str, Any] | None]:
+    """CuPy-based entry evaluation with a calculation_start_index offset. Returns None if no trades."""
     n_rows = df_cupy["close"].shape[0]
 
     for condition_group in conditions:
@@ -229,8 +249,9 @@ def take_trade_on_condition2(
 
 
 def take_trade_on_condition3(
-    df_cupy, conditions, leverage=1, initial_capital=1000, risk_free_rate=0, calculation_start_index=0
-):
+    df_cupy: dict[str, cp.ndarray], conditions: list[list[dict[str, Any]]], leverage: float = 1, initial_capital: float = 1000, risk_free_rate: float = 0, calculation_start_index: int = 0
+) -> tuple[dict[str, cp.ndarray] | None, float | None, dict[str, Any] | None]:
+    """Simplified CuPy entry evaluation. Skips uniqueness filtering — all valid index rows are trades."""
     n_rows = df_cupy["close"].shape[0]
 
     for condition_group in conditions:
@@ -298,7 +319,8 @@ def take_trade_on_condition3(
     return df_filtered, float(final_capital), metrics
 
 
-def calculate_difference_for_columns(df_cupy, column1, column2, shift1, shift2, calculation_start_index, n_rows, perform_normalization=False):
+def calculate_difference_for_columns(df_cupy: dict[str, cp.ndarray], column1: str, column2: str, shift1: int, shift2: int, calculation_start_index: int, n_rows: int, perform_normalization: bool = False) -> tuple[float, float]:
+    """Compute min and max of (shifted_column1 - shifted_column2), optionally normalizing by close/10000."""
     col1_data = df_cupy[column1]
     col2_data = df_cupy[column2]
 
@@ -318,7 +340,8 @@ def calculate_difference_for_columns(df_cupy, column1, column2, shift1, shift2, 
     return min_difference, max_difference
 
 
-def take_trade_on_condition2_for_all_ranges(df_cupy, conditions, lower_ranges, upper_ranges, column1, column2, shift1, shift2, perform_normalization, leverage=1, initial_capital=1000, risk_free_rate=0, calculation_start_index=0):
+def take_trade_on_condition2_for_all_ranges(df_cupy: dict[str, cp.ndarray], conditions: list[list[dict[str, Any]]], lower_ranges: list[float], upper_ranges: list[float], column1: str, column2: str, shift1: int, shift2: int, perform_normalization: bool, leverage: float = 1, initial_capital: float = 1000, risk_free_rate: float = 0, calculation_start_index: int = 0) -> dict[tuple[float, float], tuple[dict[str, cp.ndarray] | None, float | None, dict[str, Any] | None]] | None:
+    """Evaluate all lower/upper range combos for a single condition pair. Returns dict keyed by (lower, upper) mapping to (trades, final_capital, metrics)."""
     n_rows = df_cupy["close"].shape[0]
 
     min_difference, max_difference = calculate_difference_for_columns(
@@ -408,8 +431,9 @@ def take_trade_on_condition2_for_all_ranges(df_cupy, conditions, lower_ranges, u
 
 
 def take_trade_on_condition_vectorized(
-    df_cupy, conditions, lower_ranges, upper_ranges, leverage=1, initial_capital=1000, risk_free_rate=0, calculation_start_index=0
-):
+    df_cupy: dict[str, cp.ndarray], conditions: list[list[dict[str, Any]]], lower_ranges: list[float], upper_ranges: list[float], leverage: float = 1, initial_capital: float = 1000, risk_free_rate: float = 0, calculation_start_index: int = 0
+) -> dict[str, list[float]]:
+    """Fully vectorized CuPy evaluation across all (lower, upper) range combinations. Runs all combos in a single pass. Returns metrics lists."""
     n_rows = df_cupy["close"].shape[0]
     range_combinations = cp.array(list(product(lower_ranges, upper_ranges)))
     n_combinations = range_combinations.shape[0]
@@ -506,8 +530,9 @@ def take_trade_on_condition_vectorized(
 
 
 def take_trade_on_condition_vectorized2(
-    df_cupy, conditions, lower_ranges, upper_ranges, leverage=1, initial_capital=1000, risk_free_rate=0, calculation_start_index=0
-):
+    df_cupy: dict[str, cp.ndarray], conditions: list[list[dict[str, Any]]], lower_ranges: list[float], upper_ranges: list[float], leverage: float = 1, initial_capital: float = 1000, risk_free_rate: float = 0, calculation_start_index: int = 0
+) -> dict[str, list[float]]:
+    """Optimized vectorized CuPy evaluation — uses unique() on stacked indices for dedup and expand_dims for broadcasting."""
     n_rows = df_cupy["close"].shape[0]
     range_combinations = cp.array(list(product(lower_ranges, upper_ranges)), dtype=cp.float32)
     n_combinations = range_combinations.shape[0]
@@ -589,10 +614,11 @@ def take_trade_on_condition_vectorized2(
     return metrics
 
 
-def update_cond(data, new_first_column_name, new_second_column_name,
-                shift1=None, shift2=None,
-                lower=None, upper=None,
-                norm=None):
+def update_cond(data: Any, new_first_column_name: str, new_second_column_name: str,
+                shift1: int | None = None, shift2: int | None = None,
+                lower: float | None = None, upper: float | None = None,
+                norm: bool | None = None) -> Any:
+    """Recursively update condition fields (first/second column names, shifts, ranges, normalization) in nested dicts/lists."""
     updates = {
         "first_column_name": new_first_column_name,
         "second_column_name": new_second_column_name,

@@ -1,20 +1,23 @@
+from __future__ import annotations
 from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import Any, Callable, Generator
 
 import numpy as np
 import pandas as pd
 
 
 class RollingWindow:
-    def __init__(self, period):
+    def __init__(self, period: int) -> None:
         if period <= 0:
             raise ValueError("period must be positive")
         self.period = int(period)
-        self.values = deque()
-        self.total = 0.0
+        self.values: deque = deque()
+        self.total: float = 0.0
 
-    def update(self, value):
+    def update(self, value: float) -> float:
+        """Push a new value into the rolling window and return the current mean."""
         value = float(value)
         self.values.append(value)
         self.total += value
@@ -22,21 +25,23 @@ class RollingWindow:
             self.total -= self.values.popleft()
         return self.total / len(self.values)
 
-    def strict_mean(self):
+    def strict_mean(self) -> float:
+        """Return the mean only if the window is full (len >= period), otherwise NaN."""
         if len(self.values) < self.period:
             return np.nan
         return self.total / self.period
 
 
 class LiveEMA:
-    def __init__(self, period):
+    def __init__(self, period: int) -> None:
         if period <= 0:
             raise ValueError("period must be positive")
         self.period = int(period)
-        self.value = None
-        self.count = 0
+        self.value: float | None = None
+        self.count: int = 0
 
-    def update(self, value):
+    def update(self, value: float) -> float:
+        """Push a new value and return the live EMA."""
         value = float(value)
         if self.value is None:
             self.value = value
@@ -49,17 +54,18 @@ class LiveEMA:
 
 
 class LiveRSI:
-    def __init__(self, period):
+    def __init__(self, period: int) -> None:
         if period <= 0:
             raise ValueError("period must be positive")
         self.period = int(period)
-        self.prev_close = None
-        self.avg_gain = None
-        self.avg_loss = None
-        self.gains = deque()
-        self.losses = deque()
+        self.prev_close: float | None = None
+        self.avg_gain: float | None = None
+        self.avg_loss: float | None = None
+        self.gains: deque = deque()
+        self.losses: deque = deque()
 
-    def update(self, close):
+    def update(self, close: float) -> float:
+        """Push a new close price and return the live RSI value."""
         close = float(close)
         if self.prev_close is None:
             self.prev_close = close
@@ -87,14 +93,15 @@ class LiveRSI:
 
 
 class LiveATR:
-    def __init__(self, period):
+    def __init__(self, period: int) -> None:
         if period <= 0:
             raise ValueError("period must be positive")
         self.period = int(period)
-        self.prev_close = None
+        self.prev_close: float | None = None
         self.window = RollingWindow(period)
 
-    def update(self, high, low, close):
+    def update(self, high: float, low: float, close: float) -> float:
+        """Push a new bar (high, low, close) and return the live ATR value."""
         high = float(high)
         low = float(low)
         close = float(close)
@@ -108,12 +115,13 @@ class LiveATR:
 
 
 class LiveVWAP:
-    def __init__(self):
-        self.session = None
-        self.price_volume = 0.0
-        self.volume = 0.0
+    def __init__(self) -> None:
+        self.session: Any = None
+        self.price_volume: float = 0.0
+        self.volume: float = 0.0
 
-    def update(self, timestamp, high, low, close, volume):
+    def update(self, timestamp: Any, high: float, low: float, close: float, volume: float) -> float:
+        """Push a new bar and return the live VWAP, resetting at each session change."""
         session = pd.Timestamp(timestamp).date()
         if self.session != session:
             self.session = session
@@ -144,7 +152,8 @@ class LiveIndicatorEngine:
     fast_indicators: set = field(init=False, default_factory=set)
     fallback_indicators: list = field(init=False, default_factory=list)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Initialize per-period state objects (SMA, EMA, RSI, ATR, VWAP) and split indicators into fast/fallback groups."""
         self.indicators = list(self.indicators or [])
         self.periods = [int(p) for p in (self.periods or [])]
         self.rows = deque(maxlen=self.history_size)
@@ -156,7 +165,8 @@ class LiveIndicatorEngine:
             self.atr_state[period] = LiveATR(period)
 
     @classmethod
-    def from_history(cls, df, indicators, periods, buy_conditions=None, sell_conditions=None, history_size=512, warmup_batch=True):
+    def from_history(cls, df: pd.DataFrame, indicators: list, periods: list, buy_conditions: list | None = None, sell_conditions: list | None = None, history_size: int = 512, warmup_batch: bool = True) -> LiveIndicatorEngine:
+        """Create a LiveIndicatorEngine from historical data, optionally batch-warming up indicators."""
         engine = cls(
             indicators=indicators,
             periods=periods,
@@ -171,7 +181,8 @@ class LiveIndicatorEngine:
                 engine.update(row, evaluate_signals=False)
         return engine
 
-    def warmup(self, df):
+    def warmup(self, df: pd.DataFrame | None) -> LiveIndicatorEngine:
+        """Batch-warm the engine on historical data, pre-computing fallback indicators and seeding the deque. Returns self."""
         from mtrader.indicator_engine import add_indicators
 
         if df is None or len(df) == 0:
@@ -194,7 +205,8 @@ class LiveIndicatorEngine:
             self.rows.append(row)
         return self
 
-    def update(self, bar, evaluate_signals=True):
+    def update(self, bar: Any, evaluate_signals: bool = True) -> dict[str, Any]:
+        """Process a new bar: update fast indicators, run fallback calc if needed, evaluate buy/sell signals. Returns the enriched bar dict."""
         row = _coerce_bar(bar)
         out = dict(row)
         close = float(row["close"])
@@ -238,7 +250,8 @@ class LiveIndicatorEngine:
             out["sell_signal"] = self.evaluate(self.sell_conditions)
         return out
 
-    def evaluate(self, conditions):
+    def evaluate(self, conditions: list[list[dict[str, Any]]] | None) -> bool:
+        """Evaluate a set of OR/AND conditions against the current deque state. Returns True if any group is fully satisfied."""
         if not conditions:
             return False
         for group in conditions:
@@ -248,7 +261,7 @@ class LiveIndicatorEngine:
                 return True
         return False
 
-    def _condition_met(self, cond):
+    def _condition_met(self, cond: dict[str, Any]) -> bool:
         first = self._value(cond["first_column_name"], cond.get("shift_down_first", 0))
         second = self._value(cond["second_column_name"], cond.get("shift_down_second", 0))
         if pd.isna(first) or pd.isna(second):
@@ -261,7 +274,7 @@ class LiveIndicatorEngine:
             difference *= 10000.0 / close
         return cond["lower_range_of_difference"] <= difference <= cond["upper_range_of_difference"]
 
-    def _value(self, name, shift):
+    def _value(self, name: str, shift: int) -> float:
         shift = int(shift)
         if shift < 0:
             raise ValueError("live conditions cannot use negative shifts")
@@ -270,16 +283,19 @@ class LiveIndicatorEngine:
         row = self.rows[-1 - shift]
         return row.get(name, np.nan)
 
-    def latest(self):
+    def latest(self) -> dict[str, Any] | None:
+        """Return the most recently processed bar (enriched with indicators and signals)."""
         return self.rows[-1] if self.rows else None
 
-    def to_frame(self):
+    def to_frame(self) -> pd.DataFrame:
+        """Convert the internal deque history to a DataFrame."""
         return pd.DataFrame(list(self.rows))
 
-    def stream(self, candle_feed, on_signal=None, stop_on_callback_false=False):
+    def stream(self, candle_feed: Any, on_signal: Callable[[dict[str, Any]], bool | None] | None = None, stop_on_callback_false: bool = False) -> Generator[dict[str, Any], None, None]:
+        """Stream candles through the engine, yielding enriched bars. Optionally call on_signal on each result."""
         return stream_live_signals(self, candle_feed, on_signal=on_signal, stop_on_callback_false=stop_on_callback_false)
 
-    def _update_fallback_indicators(self):
+    def _update_fallback_indicators(self) -> None:
         from mtrader.indicator_engine import add_indicators
 
         data = pd.DataFrame(list(self.rows))
@@ -292,13 +308,14 @@ class LiveIndicatorEngine:
 
 
 class LiveStrategyEngine:
-    def __init__(self, engine, side="buy"):
+    def __init__(self, engine: LiveIndicatorEngine, side: str = "buy") -> None:
         if side not in {"buy", "sell"}:
             raise ValueError("side must be 'buy' or 'sell'")
         self.engine = engine
         self.side = side
 
-    def update(self, bar):
+    def update(self, bar: Any) -> dict[str, Any]:
+        """Process a new bar and map buy/sell signals to action (BUY/SELL/EXIT_BUY/EXIT_SELL/HOLD) based on strategy side."""
         out = self.engine.update(bar)
         if self.side == "buy":
             out["entry_signal"] = bool(out.get("buy_signal", False))
@@ -310,17 +327,21 @@ class LiveStrategyEngine:
             out["action"] = "SELL" if out["entry_signal"] else ("EXIT_SELL" if out["exit_signal"] else "HOLD")
         return out
 
-    def latest(self):
+    def latest(self) -> dict[str, Any] | None:
+        """Return the latest processed bar from the underlying engine."""
         return self.engine.latest()
 
-    def to_frame(self):
+    def to_frame(self) -> pd.DataFrame:
+        """Convert engine history to a DataFrame."""
         return self.engine.to_frame()
 
-    def stream(self, candle_feed, on_signal=None, stop_on_callback_false=False):
+    def stream(self, candle_feed: Any, on_signal: Callable[[dict[str, Any]], bool | None] | None = None, stop_on_callback_false: bool = False) -> Generator[dict[str, Any], None, None]:
+        """Stream candles, mapping to actions. See stream_live_signals."""
         return stream_live_signals(self, candle_feed, on_signal=on_signal, stop_on_callback_false=stop_on_callback_false)
 
 
-def live_indicators_from_backtest(indicators):
+def live_indicators_from_backtest(indicators: list[str] | None) -> list[str]:
+    """Map backtest indicator names to live-compatible indicator names (e.g. ema1 -> ema)."""
     live = set()
     for item in indicators or []:
         if item == "zero":
@@ -340,24 +361,27 @@ def live_indicators_from_backtest(indicators):
     return sorted(live)
 
 
-def convert_conditions_to_live(conditions):
+def convert_conditions_to_live(conditions: list[list[dict[str, Any]]]) -> list[list[dict[str, Any]]]:
+    """Deep-copy backtest conditions so they can be used in live evaluation without mutating originals."""
     return deepcopy(conditions)
 
 
-def live_column_name(column):
+def live_column_name(column: str) -> str:
+    """Identity function for column name mapping (placeholder for future live column renaming)."""
     return column
 
 
 def live_strategy_from_history(
-    df,
-    indicators,
-    periods,
-    entry_conditions,
-    exit_conditions=None,
-    side="buy",
-    history_size=512,
-    warmup_batch=True,
-):
+    df: pd.DataFrame,
+    indicators: list[str],
+    periods: list[int],
+    entry_conditions: list[list[dict[str, Any]]],
+    exit_conditions: list[list[dict[str, Any]]] | None = None,
+    side: str = "buy",
+    history_size: int = 512,
+    warmup_batch: bool = True,
+) -> LiveStrategyEngine:
+    """Build a fully-configured LiveStrategyEngine from historical data, mapping backtest indicators/conditions to live equivalents."""
     live_indicators = live_indicators_from_backtest(indicators)
     entry_live = convert_conditions_to_live(entry_conditions)
     exit_live = convert_conditions_to_live(exit_conditions or [])
@@ -380,15 +404,16 @@ def live_strategy_from_history(
 
 
 def live_signal_from_history(
-    df,
-    indicators,
-    periods,
-    new_bar,
-    buy_conditions=None,
-    sell_conditions=None,
-    history_size=512,
-    warmup_batch=True,
-):
+    df: pd.DataFrame,
+    indicators: list[str],
+    periods: list[int],
+    new_bar: Any,
+    buy_conditions: list[list[dict[str, Any]]] | None = None,
+    sell_conditions: list[list[dict[str, Any]]] | None = None,
+    history_size: int = 512,
+    warmup_batch: bool = True,
+) -> dict[str, Any]:
+    """Warm up a LiveIndicatorEngine on historical data, then evaluate a single new bar for signals."""
     engine = LiveIndicatorEngine.from_history(
         df,
         indicators=indicators,
@@ -401,7 +426,8 @@ def live_signal_from_history(
     return engine.update(new_bar)
 
 
-def stream_live_signals(live_engine, candle_feed, on_signal=None, stop_on_callback_false=False):
+def stream_live_signals(live_engine: LiveIndicatorEngine | LiveStrategyEngine, candle_feed: Any, on_signal: Callable[[dict[str, Any]], bool | None] | None = None, stop_on_callback_false: bool = False) -> Generator[dict[str, Any], None, None]:
+    """Generator that feeds candles from an iterable through a live engine, yielding enriched bars. Optionally invokes on_signal callback."""
     for candle in candle_feed:
         signal = live_engine.update(candle)
         if on_signal is not None:
@@ -411,7 +437,7 @@ def stream_live_signals(live_engine, candle_feed, on_signal=None, stop_on_callba
         yield signal
 
 
-def _coerce_bar(bar):
+def _coerce_bar(bar: Any) -> dict[str, Any]:
     if isinstance(bar, pd.Series):
         row = bar.to_dict()
     elif isinstance(bar, dict):
@@ -426,7 +452,7 @@ def _coerce_bar(bar):
     return row
 
 
-def _conditions_need_zero(conditions):
+def _conditions_need_zero(conditions: list[list[dict[str, Any]]] | None) -> bool:
     if not conditions:
         return False
     for group in conditions:
@@ -436,7 +462,7 @@ def _conditions_need_zero(conditions):
     return False
 
 
-def _split_live_indicators(indicators):
+def _split_live_indicators(indicators: list[str] | None) -> tuple[set[str], list[str]]:
     fast = set()
     fallback = []
     for item in indicators or []:
@@ -457,7 +483,7 @@ def _split_live_indicators(indicators):
     return fast, fallback
 
 
-def _batch_indicators_for_live(indicators):
+def _batch_indicators_for_live(indicators: list[str] | None) -> list[str]:
     add = []
     for item in indicators or []:
         if item == "sma":

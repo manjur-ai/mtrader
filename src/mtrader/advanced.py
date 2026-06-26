@@ -1,7 +1,9 @@
+from __future__ import annotations
 from dataclasses import dataclass, field
 from itertools import product
 import json
 from pathlib import Path
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -17,15 +19,18 @@ class CostModel:
     tax_pct: float = 0.0
     min_cost: float = 0.0
 
-    def cost_rate(self):
+    def cost_rate(self) -> float:
+        """Sum of all percentage-based cost components (brokerage, slippage, spread, exchange fee, tax)."""
         return self.brokerage_pct + self.slippage_pct + self.spread_pct + self.exchange_fee_pct + self.tax_pct
 
-    def estimate(self, turnover):
+    def estimate(self, turnover: float) -> float:
+        """Estimate total trading cost for a given turnover: variable costs + brokerage_per_order, floored at min_cost."""
         variable = turnover * self.cost_rate()
         return np.maximum(variable + self.brokerage_per_order, self.min_cost)
 
 
-def india_intraday_cost_model():
+def india_intraday_cost_model() -> CostModel:
+    """Return a CostModel with typical Indian intraday trading costs (brokerage, STT, exchange fees, etc.)."""
     return CostModel(
         brokerage_per_order=20.0,
         brokerage_pct=0.0003,
@@ -36,27 +41,31 @@ def india_intraday_cost_model():
     )
 
 
-def crypto_cost_model(fee_pct=0.001, slippage_pct=0.0005, spread_pct=0.0002):
-    return CostModel(brokerage_pct=fee_pct, slippage_pct=slippage_pct, spread_pct=spread_pct)
+def crypto_cost_model(fee_pct: float = 0.001, slippage_pct: float = 0.0005, spread_pct: float = 0.0002) -> CostModel:
+    """Return a CostModel with typical crypto exchange fee structure (maker/taker fee, slippage, spread)."""
 
 
-def fixed_quantity_size(entry_price, quantity):
+def fixed_quantity_size(entry_price: np.ndarray, quantity: float) -> np.ndarray:
+    """Position sizing: return a constant quantity regardless of entry price."""
     entry_price = np.asarray(entry_price, dtype=np.float64)
     return np.full(entry_price.shape, float(quantity), dtype=np.float64)
 
 
-def fixed_capital_size(entry_price, capital_per_trade):
+def fixed_capital_size(entry_price: np.ndarray, capital_per_trade: float) -> np.ndarray:
+    """Position sizing: quantity = capital_per_trade / entry_price (fixed capital per trade)."""
     entry_price = np.asarray(entry_price, dtype=np.float64)
     return np.divide(capital_per_trade, entry_price, out=np.zeros_like(entry_price), where=entry_price != 0)
 
 
-def percent_equity_size(entry_price, equity, pct=1.0):
+def percent_equity_size(entry_price: np.ndarray, equity: np.ndarray, pct: float = 1.0) -> np.ndarray:
+    """Position sizing: quantity = equity * pct / entry_price (fraction of current equity)."""
     entry_price = np.asarray(entry_price, dtype=np.float64)
     equity = np.asarray(equity, dtype=np.float64)
     return np.divide(equity * pct, entry_price, out=np.zeros_like(entry_price), where=entry_price != 0)
 
 
-def atr_risk_size(entry_price, atr_values, equity, risk_pct=0.01, atr_multiple=1.0):
+def atr_risk_size(entry_price: np.ndarray, atr_values: np.ndarray, equity: np.ndarray, risk_pct: float = 0.01, atr_multiple: float = 1.0) -> np.ndarray:
+    """Position sizing: quantity = equity * risk_pct / (atr * atr_multiple). Risk-based sizing using ATR."""
     entry_price = np.asarray(entry_price, dtype=np.float64)
     atr_values = np.asarray(atr_values, dtype=np.float64)
     equity = np.asarray(equity, dtype=np.float64)
@@ -66,13 +75,14 @@ def atr_risk_size(entry_price, atr_values, equity, risk_pct=0.01, atr_multiple=1
 
 
 def apply_risk_controls(
-    trades,
-    max_trades_per_day=None,
-    cooldown_bars=0,
-    max_daily_loss_pct=None,
-    datetime_col="entry_time",
-    return_col="capital_return_pct",
-):
+    trades: pd.DataFrame,
+    max_trades_per_day: int | None = None,
+    cooldown_bars: int = 0,
+    max_daily_loss_pct: float | None = None,
+    datetime_col: str = "entry_time",
+    return_col: str = "capital_return_pct",
+) -> pd.DataFrame:
+    """Apply risk control filters to a trade DataFrame: max trades/day, cooldown between trades, max daily loss. Returns a DataFrame with an `allowed` column."""
     if trades.empty:
         out = trades.copy()
         out["allowed"] = pd.Series(dtype=bool)
@@ -104,7 +114,8 @@ def apply_risk_controls(
     return out
 
 
-def resample_ohlcv(df, rule, label="right", closed="right"):
+def resample_ohlcv(df: pd.DataFrame, rule: str, label: str = "right", closed: str = "right") -> pd.DataFrame:
+    """Resample OHLCV data to a higher timeframe (e.g. '5T', '1H'). Open=first, high=max, low=min, close=last, volume=sum."""
     required = {"datetime", "open", "high", "low", "close"}
     missing = sorted(required - set(df.columns))
     if missing:
@@ -117,7 +128,8 @@ def resample_ohlcv(df, rule, label="right", closed="right"):
     return out.reset_index()
 
 
-def add_higher_timeframe_indicators(df, rule, add, rolling_minutes=None, prefix=None):
+def add_higher_timeframe_indicators(df: pd.DataFrame, rule: str, add: list[str], rolling_minutes: list[int] | None = None, prefix: str | None = None) -> pd.DataFrame:
+    """Compute indicators on a resampled higher timeframe and merge them back to the original DataFrame via merge_asof."""
     from mtrader.indicator_engine import add_indicators
 
     prefix = prefix or _timeframe_can_prefix(rule)
@@ -134,7 +146,7 @@ def add_higher_timeframe_indicators(df, rule, add, rolling_minutes=None, prefix=
     return merged
 
 
-def _timeframe_can_prefix(rule):
+def _timeframe_can_prefix(rule: str) -> str:
     offset = pd.tseries.frequencies.to_offset(rule)
     nanos = pd.Timedelta(offset).value
     minutes = nanos // pd.Timedelta(minutes=1).value
@@ -160,7 +172,8 @@ class Strategy:
     risk_free_rate: float = 0.0
     trading_cost_factor: float = 0.0002
 
-    def run(self, df, **overrides):
+    def run(self, df: pd.DataFrame, **overrides: Any) -> Any:
+        """Run a backtest using this strategy's parameters, optionally overriding any field."""
         from mtrader.backtest import run_backtest
 
         params = self.__dict__.copy()
@@ -182,7 +195,8 @@ class Strategy:
             trading_cost_factor=params["trading_cost_factor"],
         )
 
-    def to_live(self, history_df, **overrides):
+    def to_live(self, history_df: pd.DataFrame, **overrides: Any) -> Any:
+        """Convert this strategy to a live trading engine (LiveStrategyEngine)."""
         from mtrader.live import live_strategy_from_history
 
         params = self.__dict__.copy()
@@ -198,7 +212,8 @@ class Strategy:
             warmup_batch=params.get("warmup_batch", True),
         )
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the strategy to a JSON-compatible dict."""
         return {
             "schema": "mtrader.strategy",
             "version": 1,
@@ -219,7 +234,8 @@ class Strategy:
         }
 
     @classmethod
-    def from_dict(cls, data):
+    def from_dict(cls, data: dict[str, Any]) -> Strategy:
+        """Deserialize a strategy from a dict (inverse of to_dict). Validates the schema field."""
         if data.get("schema") not in {None, "mtrader.strategy"}:
             raise ValueError(f"Unsupported strategy schema: {data.get('schema')}")
         return cls(
@@ -239,27 +255,32 @@ class Strategy:
             trading_cost_factor=data.get("trading_cost_factor", 0.0002),
         )
 
-    def save(self, path):
+    def save(self, path: str) -> Path:
+        """Save the strategy to a JSON file."""
         save_strategy(self, path)
-        return path
+        return Path(path)
 
     @classmethod
-    def load(cls, path):
+    def load(cls, path: str) -> Strategy:
+        """Load a strategy from a JSON file."""
         return load_strategy(path)
 
 
-def save_strategy(strategy, path):
+def save_strategy(strategy: Strategy, path: str) -> Path:
+    """Save a Strategy object to a JSON file."""
     path = Path(path)
     path.write_text(json.dumps(strategy.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
     return path
 
 
-def load_strategy(path):
+def load_strategy(path: str) -> Strategy:
+    """Load a Strategy object from a JSON file."""
     path = Path(path)
     return Strategy.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
 
-def run_portfolio(data_by_symbol, strategy, initial_capital=1000):
+def run_portfolio(data_by_symbol: dict[str, pd.DataFrame], strategy: Strategy, initial_capital: float = 1000) -> dict[str, Any]:
+    """Run a strategy across multiple symbols, distributing capital equally. Returns combined equity curve, trades, and per-symbol results."""
     if not data_by_symbol:
         raise ValueError("data_by_symbol cannot be empty")
     capital_per_symbol = initial_capital / len(data_by_symbol)
@@ -293,7 +314,8 @@ def run_portfolio(data_by_symbol, strategy, initial_capital=1000):
     return {"results": results, "equity": portfolio, "trades": trades, "final_capital": float(portfolio["equity"].iloc[-1])}
 
 
-def random_parameter_search(df, strategy_factory, param_space, n_iter=20, metric="final_capital", seed=None):
+def random_parameter_search(df: pd.DataFrame, strategy_factory: Callable[..., Strategy], param_space: dict[str, list[Any]], n_iter: int = 20, metric: str = "final_capital", seed: int | None = None) -> tuple[dict[str, Any] | None, pd.DataFrame]:
+    """Random search over strategy parameter space. Returns (best_params_with_result, results_df)."""
     rng = np.random.default_rng(seed)
     keys = list(param_space)
     rows = []
@@ -318,7 +340,8 @@ def random_parameter_search(df, strategy_factory, param_space, n_iter=20, metric
     return best, pd.DataFrame(rows)
 
 
-def walk_forward_optimize(df, strategy_factory, param_grid, train_days, test_days, metric="final_capital"):
+def walk_forward_optimize(df: pd.DataFrame, strategy_factory: Callable[..., Strategy], param_grid: list[dict[str, Any]], train_days: int, test_days: int, metric: str = "final_capital") -> pd.DataFrame:
+    """Walk-forward optimization: train on train_days, test on test_days, stepping forward. Returns DataFrame of per-split results."""
     from mtrader.backtest import walk_forward_splits
 
     rows = []
@@ -344,7 +367,8 @@ def walk_forward_optimize(df, strategy_factory, param_grid, train_days, test_day
     return pd.DataFrame(rows)
 
 
-def grid_from_ranges(**params):
+def grid_from_ranges(**params: Any) -> list[dict[str, Any]]:
+    """Build a Cartesian product grid from parameter lists (same as parameter_grid)."""
     keys = list(params)
     vals = [v if isinstance(v, (list, tuple, np.ndarray, pd.Index)) else [v] for v in params.values()]
     return [dict(zip(keys, combo)) for combo in product(*vals)]

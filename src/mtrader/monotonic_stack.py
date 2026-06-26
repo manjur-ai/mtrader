@@ -1,4 +1,6 @@
+from __future__ import annotations
 import numpy as np
+from numpy.typing import NDArray
 
 try:
     from numba import njit
@@ -8,7 +10,8 @@ except ImportError:
 
 
 @njit
-def monotonic_stack_for_value1_lessthan_value2(values1, values2):
+def monotonic_stack_for_value1_lessthan_value2(values1: NDArray[np.float64], values2: NDArray[np.float64]) -> NDArray[np.int32]:
+    """For each i, find the earliest j > i where values1[j] >= values2[i] (cross above). Returns -1 if not found."""
     n = len(values1)
     result = np.full(n, -1, dtype=np.int32)
     stack = np.empty(n, dtype=np.int32)
@@ -26,7 +29,8 @@ def monotonic_stack_for_value1_lessthan_value2(values1, values2):
 
 
 @njit
-def monotonic_stack_for_value1_gt_value2(values1, values2):
+def monotonic_stack_for_value1_gt_value2(values1: NDArray[np.float64], values2: NDArray[np.float64]) -> NDArray[np.int32]:
+    """For each i, find the earliest j > i where values1[j] <= values2[i] (cross below). Returns -1 if not found."""
     n = len(values1)
     result = np.full(n, -1, dtype=np.int32)
     stack = np.empty(n, dtype=np.int32)

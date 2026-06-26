@@ -1,12 +1,15 @@
+from __future__ import annotations
 import pandas as pd
 import numpy as np
 import re
 from functools import partial
 from datetime import datetime, time
 from pandas.api.types import is_numeric_dtype, is_datetime64_any_dtype
+from typing import Any
 
 
-def detect_data_types_with_formats(df):
+def detect_data_types_with_formats(df: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    """Infer column types (int, float, date, datetime, time, str, bool, unixtimestamp) and their formats from a DataFrame."""
     data_types = {}
     formats = [
         "%Y-%m-%d %H:%M:%S","%Y-%m-%d", "%Y%m%d", "%d-%m-%Y", "%m-%d-%Y", "%d/%m/%Y", "%m/%d/%Y",
@@ -112,8 +115,8 @@ def detect_data_types_with_formats(df):
     return data_types
 
 
-def fill_missing_rows(group, start_time, end_time):
-    start_time = pd.Timestamp(group['datetime'].iloc[0].date()).replace(hour=start_time.hour, minute=start_time.minute)
+def fill_missing_rows(group: pd.DataFrame, start_time: time, end_time: time) -> pd.DataFrame:
+    """Forward/backward fill missing minute-level rows within a start_time-to-end_time range for a single day group."""
     end_time = pd.Timestamp(group['datetime'].iloc[0].date()).replace(hour=end_time.hour, minute=end_time.minute)
     full_range = pd.date_range(start=start_time, end=end_time, freq='min')
     group = group.set_index('datetime').reindex(full_range)
@@ -123,13 +126,31 @@ def fill_missing_rows(group, start_time, end_time):
     return group
 
 
-def clean_data(df_input, start_time=None, end_time=None, min_rec_perday=1, fill_gap=False,
-               start_date="0001-01-01", end_date="9999-12-31", share_name="keep_original", create_copy=True,
-               column_report=False, multiplier=1, stopprint=False, adjustsplit=False):
+def clean_data(df_input: pd.DataFrame, start_time: str | None = None, end_time: str | None = None, min_rec_perday: int = 1, fill_gap: bool = False,
+               start_date: str = "0001-01-01", end_date: str = "9999-12-31", share_name: str | None = "keep_original", create_copy: bool = True,
+               column_report: bool = False, multiplier: int = 1, stopprint: bool = False, adjustsplit: bool = False) -> pd.DataFrame:
+    """Clean and normalize an OHLCV DataFrame: detect column types, set datetime index, fill gaps, adjust splits, and filter by date/time range."""
     if create_copy:
         df = df_input.copy()
     else:
         df = df_input
+
+    if not isinstance(df_input, pd.DataFrame) or df_input.empty:
+        raise ValueError("df_input must be a non-empty DataFrame")
+    if len(df_input.columns) < 2:
+        raise ValueError("DataFrame must have at least 2 columns for data cleaning")
+    if min_rec_perday <= 0:
+        raise ValueError(f"min_rec_perday must be > 0, got {min_rec_perday}")
+    if multiplier <= 0:
+        raise ValueError(f"multiplier must be > 0, got {multiplier}")
+    if start_time is not None and not re.fullmatch(r'\d{2}:\d{2}(:\d{2})?', start_time):
+        raise ValueError(f"start_time must match HH:MM or HH:MM:SS format, got '{start_time}'")
+    if end_time is not None and not re.fullmatch(r'\d{2}:\d{2}(:\d{2})?', end_time):
+        raise ValueError(f"end_time must match HH:MM or HH:MM:SS format, got '{end_time}'")
+    if start_date and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', start_date):
+        raise ValueError(f"start_date must match YYYY-MM-DD format, got '{start_date}'")
+    if end_date and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', end_date):
+        raise ValueError(f"end_date must match YYYY-MM-DD format, got '{end_date}'")
 
     if start_time and end_time:
         try:
@@ -140,9 +161,15 @@ def clean_data(df_input, start_time=None, end_time=None, min_rec_perday=1, fill_
             end_time_fmt = pd.to_datetime(end_time, format="%H:%M").time()
 
     if start_date:
-        start_date_fmt = datetime.strptime(start_date, "%Y-%m-%d").date()
+        try:
+            start_date_fmt = datetime.strptime(start_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise ValueError(f"start_date '{start_date}' is not a valid YYYY-MM-DD date")
     if end_date:
-        end_date_fmt = datetime.strptime(end_date, "%Y-%m-%d").date()
+        try:
+            end_date_fmt = datetime.strptime(end_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise ValueError(f"end_date '{end_date}' is not a valid YYYY-MM-DD date")
 
     data_type_info = detect_data_types_with_formats(df)
 
