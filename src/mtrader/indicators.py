@@ -92,15 +92,21 @@ def rsi(close: np.ndarray, period: int) -> np.ndarray:
     if n < 2:
         return out
     diffs = np.diff(close)
-    for i in range(period, n):
-        segment = diffs[i - period:i]
-        avg_gain = np.mean(segment[segment > 0]) if np.any(segment > 0) else 0.0
-        avg_loss = -np.mean(segment[segment < 0]) if np.any(segment < 0) else 0.0
+    gains = np.where(diffs > 0, diffs, 0.0)
+    losses = np.where(diffs < 0, -diffs, 0.0)
+    cum_gain = np.cumsum(gains)
+    cum_loss = np.cumsum(losses)
+    for i in range(period - 1, n):
+        if i == period - 1:
+            avg_gain = cum_gain[i] / period
+            avg_loss = cum_loss[i] / period
+        else:
+            avg_gain = (avg_gain * (period - 1) + gains[i - 1]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i - 1]) / period
         if avg_loss == 0.0:
             out[i] = 100.0 if avg_gain > 0 else 50.0
         else:
-            rs = avg_gain / avg_loss
-            out[i] = 100.0 - 100.0 / (1.0 + rs)
+            out[i] = 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)
     return out
 
 

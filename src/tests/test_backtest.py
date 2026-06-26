@@ -459,9 +459,8 @@ def test_rsi():
                       110, 108, 111, 113, 112, 114, 115, 113, 116, 118], dtype=np.float64)
     vals = rsi(close, 14)
     assert len(vals) == 20
-    assert np.isnan(vals[13])
-    assert not np.isnan(vals[14])
-    assert 0 <= vals[14] <= 100
+    assert not np.isnan(vals[13])
+    assert 0 <= vals[13] <= 100
     builtins.print(f"  RSI: last value={vals[-1]:.2f}")
 
 
@@ -531,6 +530,73 @@ def test_add_indicators_popular():
         assert col in result.columns, f"Missing column: {col}"
         assert result[col].notna().sum() > 0, f"All NaN in {col}"
     builtins.print(f"  add_indicators popular: RSI/ATR/Stoch/%B/OBV all computed")
+
+
+def test_backtest_report():
+    from mtrader import add_indicators, precalculate_exit_time_amount_profit
+    from mtrader import take_trade_on_condition_numpy, backtest_report, equity_curve
+
+    df = _prepare_backtest_df()
+    conditions = [[
+        {
+            "first_column_name": "can1_sma1_p5",
+            "second_column_name": "close",
+            "shift_down_first": 0,
+            "shift_down_second": 0,
+            "lower_range_of_difference": -np.inf,
+            "upper_range_of_difference": -30,
+            "perform_normalization_of_diff": False,
+        }
+    ]]
+    df = precalculate_exit_time_amount_profit(
+        df, conditions, buy_or_sell="buy", target_delta=150, stoploss_delta=75,
+    )
+    take_trade_on_condition_numpy(df, conditions, leverage=1, initial_capital=1000)
+
+    report = backtest_report(df, initial_capital=1000, risk_free_rate=0.05)
+    assert "total_trades" in report
+    assert "sharpe_ratio" in report
+    assert "max_drawdown_pct" in report
+    assert "profit_factor" in report
+    assert "win_rate_pct" in report
+    assert report["total_trades"] >= 0
+    builtins.print(f"  backtest_report: {report['total_trades']} trades, "
+                   f"sharpe={report['sharpe_ratio']}, "
+                   f"win_rate={report['win_rate_pct']}%")
+
+    eq = equity_curve(df)
+    assert "equity" in eq.columns
+    assert "drawdown_pct" in eq.columns
+    assert eq["equity"].iloc[-1] > 0
+    builtins.print(f"  equity_curve: final equity={eq['equity'].iloc[-1]:.2f}, "
+                   f"max dd={eq['drawdown_pct'].max():.2f}%")
+
+
+def test_backtest_report_empty():
+    from mtrader import add_indicators, precalculate_exit_time_amount_profit
+    from mtrader import take_trade_on_condition_numpy, backtest_report
+
+    df = _prepare_backtest_df()
+    impossible = [[
+        {
+            "first_column_name": "close",
+            "second_column_name": "close",
+            "shift_down_first": 0,
+            "shift_down_second": 0,
+            "lower_range_of_difference": 999999,
+            "upper_range_of_difference": 999999,
+            "perform_normalization_of_diff": False,
+        }
+    ]]
+    df = precalculate_exit_time_amount_profit(
+        df, impossible, buy_or_sell="buy", target_delta=999999, stoploss_delta=999999,
+    )
+    take_trade_on_condition_numpy(df, impossible, leverage=1, initial_capital=1000)
+
+    report = backtest_report(df)
+    assert report["total_trades"] == 0
+    assert report["final_capital"] == 1000
+    builtins.print("  backtest_report empty: OK")
 
 
 def test_find_best_exit_raises_on_empty():

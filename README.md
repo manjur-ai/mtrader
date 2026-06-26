@@ -144,7 +144,7 @@ Directly computable via `add_indicators()`:
 | ATR | `atr` | SMA of True Range (max(H-L, H-prevC, prevC-L)) |
 | Stochastic %K | `stochk` | (close - min_L_N) / (max_H_N - min_L_N) × 100 |
 | Stochastic %D | `stochd` | 3-period SMA of %K |
-| Bollinger %B | `bbp` | (close - lower) / (upper - lower), kde"=2 |
+| Bollinger %B | `bbp` | (close - lower) / (upper - lower), k=2 |
 | OBV | `obv` | Cumulative signed volume |
 
 **Example:**

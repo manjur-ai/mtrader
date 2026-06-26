@@ -17,6 +17,7 @@ from mtrader.trading import (
     update_cond,
 )
 from mtrader.optimize_exit import find_best_exit
+from mtrader.report import backtest_report, equity_curve
 
 __all__ = [
     "printo", "print", "timenum",
@@ -31,4 +32,6 @@ __all__ = [
     "take_trade_on_condition_vectorized", "take_trade_on_condition_vectorized2",
     "update_cond",
     "find_best_exit",
+    "backtest_report",
+    "equity_curve",
 ]

@@ -43,13 +43,23 @@ def find_best_exit(
     best_score = -np.inf if higher_is_better else np.inf
     best_params = None
 
+    exit_cols = {"exit_signal", "next_exit_index", "next_exit_value", "next_exit_profit",
+                 "next_exit_index_cond", "next_exit_datetime", "next_exit_tradingcost",
+                 "next_exit_capital_multiplier_in_percent", "target_price", "target_index",
+                 "next_exit_value_target", "stoploss_index", "stoploss_price",
+                 "next_exit_value_stoploss", "take_trade", "capital_at_exit"}
+    stash = {}
+
     for tg, sl, tgn, sln, ec in param_grid:
-        df_run = df.copy()
+        for col in exit_cols:
+            if col in df.columns:
+                stash[col] = df[col]
+                del df[col]
 
         conds = ec if ec is not None else entry_conditions
 
-        df_run = precalculate_exit_time_amount_profit(
-            df_run, conds, buy_or_sell=buy_or_sell,
+        precalculate_exit_time_amount_profit(
+            df, conds, buy_or_sell=buy_or_sell,
             target_delta=tg, stoploss_delta=sl,
             target_delta_normalized=tgn, stoploss_delta_normalized=sln,
             trading_cost_factor=trading_cost_factor,
@@ -59,7 +69,7 @@ def find_best_exit(
         )
 
         _, final_capital, metrics = take_trade_on_condition_numpy(
-            df_run, entry_conditions, leverage=leverage,
+            df, entry_conditions, leverage=leverage,
             initial_capital=initial_capital, risk_free_rate=risk_free_rate,
         )
 
@@ -79,7 +89,7 @@ def find_best_exit(
                 "exit_conditions": ec,
             }
 
-        entry_count = int(df_run["take_trade"].sum()) if "take_trade" in df_run.columns else 0
+        entry_count = int(df["take_trade"].sum()) if "take_trade" in df.columns else 0
 
         results.append({
             "target_delta": tg,
@@ -96,6 +106,10 @@ def find_best_exit(
 
         if verbose:
             _log_param(tg, sl, tgn, sln, ec, entry_count, final_capital, metrics)
+
+        for col, val in stash.items():
+            df[col] = val
+        stash.clear()
 
     return best_params, pd.DataFrame(results)
 
