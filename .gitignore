@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 .pytest_cache/
+src/*.egg-info/
 .graphify_python
 .graphify_detect.json
 .graphify_extract.json
@@ -15,3 +16,4 @@ build/
 graphify-out/
 *.egg
 .DS_Store
+_remote_call.py

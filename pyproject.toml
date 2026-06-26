@@ -1,13 +1,13 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
-name = "mtrader-backtest"
+name = "mtrader"
 version = "0.1.0"
 description = "Vectorized backtesting & forward-testing framework for intraday strategies"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.10"
 authors = [
     {name = "Manjur Ahmed", email = "manjur@tasklipi.com"},
@@ -15,7 +15,6 @@ authors = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Financial and Insurance Industry",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -38,5 +37,5 @@ Repository = "https://github.com/manjur-ai/mtrader"
 "Bug Tracker" = "https://github.com/manjur-ai/mtrader/issues"
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = ["mtrader", "mtrader.*"]
