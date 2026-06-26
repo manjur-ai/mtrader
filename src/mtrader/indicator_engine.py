@@ -536,6 +536,20 @@ def add_indicators(df, add, rolling_minutes=None, days_back=None):
             if metric in add:
                 df[f'can1_{metric}_p{rolling_minute}'] = group[col].rolling(window=rolling_minute, min_periods=1).mean().reset_index(level=0, drop=True)
 
+        if "or_high" in add or "or_low" in add:
+            def _opening_range_expanding(g):
+                first_n = g.head(rolling_minute)
+                if "or_high" in add:
+                    g[f'can1_or_high_p{rolling_minute}'] = first_n['high'].cummax()
+                if "or_low" in add:
+                    g[f'can1_or_low_p{rolling_minute}'] = first_n['low'].cummin()
+                return g
+            df = df.groupby(df['datetime'].dt.date, group_keys=False).apply(_opening_range_expanding)
+            if "or_high" in add:
+                df[f'can1_or_high_p{rolling_minute}'] = df.groupby(df['datetime'].dt.date)[f'can1_or_high_p{rolling_minute}'].ffill()
+            if "or_low" in add:
+                df[f'can1_or_low_p{rolling_minute}'] = df.groupby(df['datetime'].dt.date)[f'can1_or_low_p{rolling_minute}'].ffill()
+
         if "rsi" in full_add:
             df[f'can1_rsi_p{rolling_minute}'] = rsi(df['close'].to_numpy(), rolling_minute)
         if "atr" in full_add:

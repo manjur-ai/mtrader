@@ -20,6 +20,8 @@ def precalculate_exit_time_amount_profit(
     stoploss_delta=None,
     target_delta_normalized=None,
     stoploss_delta_normalized=None,
+    target_delta_column=None,
+    stoploss_delta_column=None,
     stoploss_wait_candleclose=False,
     stoploss_consider_slipage=True,
     cupy=False
@@ -86,11 +88,11 @@ def precalculate_exit_time_amount_profit(
 
     df["next_exit_index_cond"] = next_exit_indices_cond
 
-    if target_delta is not None or target_delta_normalized is not None:
-        if target_delta_normalized is not None:
+    if target_delta is not None or target_delta_normalized is not None or target_delta_column is not None:
+        if target_delta_column is not None:
+            target_delta = df[target_delta_column].to_numpy(dtype=np.float64)
+        elif target_delta_normalized is not None:
             target_delta = target_delta_normalized * (close_prices / 10000.0)
-        else:
-            target_delta = target_delta
 
         if buy_or_sell == "buy":
             target_prices = close_prices + target_delta
@@ -110,11 +112,11 @@ def precalculate_exit_time_amount_profit(
         next_exit_indices = np.minimum(next_exit_indices, target_index)
         next_exit_value = np.where(next_exit_indices == target_index, next_exit_value_target, next_exit_value)
 
-    if stoploss_delta is not None or stoploss_delta_normalized is not None:
-        if stoploss_delta_normalized is not None:
+    if stoploss_delta is not None or stoploss_delta_normalized is not None or stoploss_delta_column is not None:
+        if stoploss_delta_column is not None:
+            stoploss_delta = df[stoploss_delta_column].to_numpy(dtype=np.float64)
+        elif stoploss_delta_normalized is not None:
             stoploss_delta = stoploss_delta_normalized * (close_prices / 10000.0)
-        else:
-            stoploss_delta = stoploss_delta
 
         if buy_or_sell == "buy":
             if stoploss_wait_candleclose:
