@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 from itertools import product
-from copy import deepcopy
 
 
 def find_best_exit(

@@ -1,2 +1,2 @@
 include README.md
-recursive-include tests *.py
+include src/mtrader/py.typed

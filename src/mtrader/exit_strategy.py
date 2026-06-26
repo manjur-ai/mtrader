@@ -29,8 +29,11 @@ def precalculate_exit_time_amount_profit(
     stoploss_delta_column=None,
     stoploss_wait_candleclose=False,
     stoploss_consider_slipage=True,
+    stoploss_consider_slippage=None,
     cupy=False
 ):
+    if stoploss_consider_slippage is not None:
+        stoploss_consider_slipage = stoploss_consider_slippage
     array_lib = cp if (cupy and has_cupy) else np
 
     close_prices = df['close'].to_numpy()
