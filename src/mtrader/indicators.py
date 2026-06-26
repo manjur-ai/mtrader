@@ -83,3 +83,93 @@ def ssvol(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
     sq_dev = (source_numpy - ssma_values) ** 2
     ssvol_var = ssma(sq_dev, rolling_minute)
     return np.sqrt(ssvol_var)
+
+
+def rsi(close: np.ndarray, period: int) -> np.ndarray:
+    close = np.asarray(close, dtype=np.float64)
+    n = len(close)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if n < 2:
+        return out
+    diffs = np.diff(close)
+    for i in range(period, n):
+        segment = diffs[i - period:i]
+        avg_gain = np.mean(segment[segment > 0]) if np.any(segment > 0) else 0.0
+        avg_loss = -np.mean(segment[segment < 0]) if np.any(segment < 0) else 0.0
+        if avg_loss == 0.0:
+            out[i] = 100.0 if avg_gain > 0 else 50.0
+        else:
+            rs = avg_gain / avg_loss
+            out[i] = 100.0 - 100.0 / (1.0 + rs)
+    return out
+
+
+def atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -> np.ndarray:
+    high = np.asarray(high, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    close = np.asarray(close, dtype=np.float64)
+    n = len(close)
+    out = np.full(n, np.nan, dtype=np.float64)
+    if n < 2:
+        return out
+    tr = np.zeros(n, dtype=np.float64)
+    tr[0] = high[0] - low[0]
+    for i in range(1, n):
+        tr[i] = max(high[i] - low[i], abs(high[i] - close[i - 1]), abs(low[i] - close[i - 1]))
+    for i in range(period - 1, n):
+        out[i] = np.mean(tr[i - period + 1:i + 1])
+    return out
+
+
+def stoch_k(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int) -> np.ndarray:
+    high = np.asarray(high, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    close = np.asarray(close, dtype=np.float64)
+    n = len(close)
+    out = np.full(n, np.nan, dtype=np.float64)
+    for i in range(period - 1, n):
+        hh = np.max(high[i - period + 1:i + 1])
+        ll = np.min(low[i - period + 1:i + 1])
+        denom = hh - ll
+        out[i] = 100.0 * (close[i] - ll) / denom if denom != 0 else 50.0
+    return out
+
+
+def stoch_d(k_values: np.ndarray, period: int = 3) -> np.ndarray:
+    k = np.asarray(k_values, dtype=np.float64)
+    n = len(k)
+    out = np.full(n, np.nan, dtype=np.float64)
+    for i in range(period - 1, n):
+        out[i] = np.mean(k[i - period + 1:i + 1])
+    return out
+
+
+def bollinger_b(close: np.ndarray, period: int, k: float = 2.0) -> np.ndarray:
+    close = np.asarray(close, dtype=np.float64)
+    n = len(close)
+    out = np.full(n, np.nan, dtype=np.float64)
+    for i in range(period - 1, n):
+        seg = close[i - period + 1:i + 1]
+        mu = np.mean(seg)
+        sigma = np.std(seg, ddof=1)
+        upper = mu + k * sigma
+        lower = mu - k * sigma
+        denom = upper - lower
+        out[i] = (close[i] - lower) / denom if denom != 0 else 0.5
+    return out
+
+
+def obv(close: np.ndarray, volume: np.ndarray) -> np.ndarray:
+    close = np.asarray(close, dtype=np.float64)
+    volume = np.asarray(volume, dtype=np.float64)
+    n = len(close)
+    out = np.zeros(n, dtype=np.float64)
+    out[0] = volume[0]
+    for i in range(1, n):
+        if close[i] > close[i - 1]:
+            out[i] = out[i - 1] + volume[i]
+        elif close[i] < close[i - 1]:
+            out[i] = out[i - 1] - volume[i]
+        else:
+            out[i] = out[i - 1]
+    return out

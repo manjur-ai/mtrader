@@ -134,6 +134,50 @@ Base signals are referenced by numeric codes:
 
 **Column naming:** `can1_{indicator}{code}_p{period}`, e.g. `can1_sma1_p5`.
 
+### Popular technical indicators
+
+Directly computable via `add_indicators()`:
+
+| Indicator | Code | Formula |
+|-----------|------|---------|
+| RSI | `rsi` | 100 - 100/(1 + avg_gain/avg_loss) |
+| ATR | `atr` | SMA of True Range (max(H-L, H-prevC, prevC-L)) |
+| Stochastic %K | `stochk` | (close - min_L_N) / (max_H_N - min_L_N) × 100 |
+| Stochastic %D | `stochd` | 3-period SMA of %K |
+| Bollinger %B | `bbp` | (close - lower) / (upper - lower), kde"=2 |
+| OBV | `obv` | Cumulative signed volume |
+
+**Example:**
+```python
+df = add_indicators(df, add=["rsi", "atr", "stochk", "stochd", "bbp", "obv"],
+                    rolling_minutes=[14])
+# Columns created: can1_rsi_p14, can1_atr_p14, can1_stochk_p14, ...
+```
+
+These functions are also available directly:
+```python
+from mtrader import rsi, atr, stoch_k, stoch_d, bollinger_b, obv
+
+rsi_values = rsi(close_array, period=14)
+atr_values = atr(high, low, close, period=14)
+k_values = stoch_k(high, low, close, period=14)
+d_values = stoch_d(k_values, period=3)
+bbp_values = bollinger_b(close, period=20, k=2.0)
+obv_values = obv(close, volume)
+```
+
+### Compose your own
+
+Many popular indicators can be composed from existing primitives without new code:
+
+| Desired | How |
+|---------|-----|
+| **MACD line** | `ema12 - ema26` (use `add=["ema1"]` with periods 12 & 26, then diff) |
+| **MACD histogram** | MACD line minus its EMA(9) |
+| **Bollinger Upper/Lower** | `sma1 + k*svol1` / `sma1 - k*svol1` |
+| **Keltner Channels** | `ema1 + k*atr` / `ema1 - k*atr` |
+| **CCI** | (close - sma1) / (0.015 × svol1) |
+
 ### Normalizations
 Prefix an indicator name for ratio-based forms:
 

@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from mtrader.indicators import ema, evol, wma, wvol, ssma, ssvol
+from mtrader.indicators import ema, evol, wma, wvol, ssma, ssvol, rsi, atr, stoch_k, stoch_d, bollinger_b, obv
 
 
 FEATURE_CODE = {
@@ -535,6 +535,29 @@ def add_indicators(df, add, rolling_minutes=None, days_back=None):
         for metric, col in [("ma_inday", "close"), ("ma2_inday", "av2"), ("ma3_inday", "av3"), ("ma4_inday", "av4"), ("ma5_inday", "open"), ("ma6_inday", "high"), ("ma7_inday", "low")]:
             if metric in add:
                 df[f'can1_{metric}_p{rolling_minute}'] = group[col].rolling(window=rolling_minute, min_periods=1).mean().reset_index(level=0, drop=True)
+
+        if "rsi" in full_add:
+            df[f'can1_rsi_p{rolling_minute}'] = rsi(df['close'].to_numpy(), rolling_minute)
+        if "atr" in full_add:
+            df[f'can1_atr_p{rolling_minute}'] = atr(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute
+            )
+        if "stochk" in full_add:
+            df[f'can1_stochk_p{rolling_minute}'] = stoch_k(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute
+            )
+        if "stochd" in full_add:
+            k_col = f'can1_stochk_p{rolling_minute}'
+            if k_col not in df.columns:
+                df[k_col] = stoch_k(
+                    df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute
+                )
+            df[f'can1_stochd_p{rolling_minute}'] = stoch_d(df[k_col].to_numpy(), 3)
+        if "bbp" in full_add:
+            df[f'can1_bbp_p{rolling_minute}'] = bollinger_b(df['close'].to_numpy(), rolling_minute)
+
+    if "obv" in full_add:
+        df['can1_obv'] = obv(df['close'].to_numpy(), df['volume'].to_numpy())
 
     column_temp_added = [c for c in (full_add - set(add)) if c in df.columns]
     df.drop(columns=column_temp_added, inplace=True)

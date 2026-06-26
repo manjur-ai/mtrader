@@ -453,6 +453,86 @@ def test_find_best_exit_normalized():
                    f"sl_norm={best['stoploss_delta_normalized']}")
 
 
+def test_rsi():
+    from mtrader import rsi
+    close = np.array([100, 102, 101, 103, 105, 104, 106, 108, 107, 109,
+                      110, 108, 111, 113, 112, 114, 115, 113, 116, 118], dtype=np.float64)
+    vals = rsi(close, 14)
+    assert len(vals) == 20
+    assert np.isnan(vals[13])
+    assert not np.isnan(vals[14])
+    assert 0 <= vals[14] <= 100
+    builtins.print(f"  RSI: last value={vals[-1]:.2f}")
+
+
+def test_atr():
+    from mtrader import atr
+    h = np.array([105, 107, 106, 108, 110], dtype=np.float64)
+    l = np.array([95, 97, 96, 98, 100], dtype=np.float64)
+    c = np.array([100, 102, 101, 103, 105], dtype=np.float64)
+    vals = atr(h, l, c, 3)
+    assert len(vals) == 5
+    assert np.isnan(vals[0:2]).all()
+    assert not np.isnan(vals[4])
+    assert vals[4] > 0
+    builtins.print(f"  ATR: value={vals[4]:.4f}")
+
+
+def test_stoch():
+    from mtrader import stoch_k, stoch_d
+    h = np.array([110, 112, 111, 115, 114, 116, 118], dtype=np.float64)
+    l = np.array([90, 92, 91, 95, 94, 96, 98], dtype=np.float64)
+    c = np.array([100, 102, 101, 105, 104, 106, 108], dtype=np.float64)
+    k = stoch_k(h, l, c, 5)
+    d = stoch_d(k, 3)
+    assert len(k) == 7
+    assert np.isnan(k[0:4]).all()
+    assert not np.isnan(k[4])
+    assert 0 <= k[4] <= 100
+    assert np.isnan(d[0:6]).all() or not np.isnan(d[6])
+    builtins.print(f"  Stoch: %K={k[-1]:.2f}, %D={d[-1]:.2f}")
+
+
+def test_bollinger_b():
+    from mtrader import bollinger_b
+    c = np.array([100, 102, 101, 103, 105, 104, 106, 108, 107, 109,
+                  110, 108, 111, 113, 112], dtype=np.float64)
+    vals = bollinger_b(c, 10)
+    assert len(vals) == 15
+    assert np.isnan(vals[0:9]).all()
+    assert not np.isnan(vals[14])
+    assert 0 <= vals[14] <= 1
+    builtins.print(f"  Bollinger %B: value={vals[-1]:.4f}")
+
+
+def test_obv():
+    from mtrader import obv
+    c = np.array([100, 102, 101, 103, 105], dtype=np.float64)
+    v = np.array([1000, 1500, 1200, 1800, 2000], dtype=np.float64)
+    vals = obv(c, v)
+    assert len(vals) == 5
+    assert vals[0] == 1000
+    assert vals[1] == 2500
+    builtins.print(f"  OBV: {vals}")
+
+
+def test_add_indicators_popular():
+    from mtrader import add_indicators
+
+    df = _gen_ohlc(300)
+    result = add_indicators(
+        df,
+        add=["rsi", "atr", "stochk", "stochd", "bbp", "obv", "close", "high", "low", "volume"],
+        rolling_minutes=[14],
+    )
+
+    for col in ["can1_rsi_p14", "can1_atr_p14", "can1_stochk_p14",
+                 "can1_stochd_p14", "can1_bbp_p14", "can1_obv"]:
+        assert col in result.columns, f"Missing column: {col}"
+        assert result[col].notna().sum() > 0, f"All NaN in {col}"
+    builtins.print(f"  add_indicators popular: RSI/ATR/Stoch/%B/OBV all computed")
+
+
 def test_find_best_exit_raises_on_empty():
     from mtrader import find_best_exit
     import pytest
