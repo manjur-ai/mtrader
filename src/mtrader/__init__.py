@@ -4,7 +4,7 @@ from mtrader.data_cleaner import detect_data_types_with_formats, fill_missing_ro
 from mtrader.indicators import ema, evol, wma, wvol, ssma, ssvol, rsi, atr
 from mtrader.indicators import stoch_k, stoch_d, bollinger_b, obv, macd, willr, cci, adx, mfi, psar, heikin_ashi
 from mtrader.indicators import supertrend, ichimoku, inside_bar, bullish_engulfing, bearish_engulfing
-from mtrader.indicator_engine import add_indicators, add_indicators_on_group, FEATURE_CODE, BASE_CODES_ORDERED, BASE_NAMES_ORDERED
+from mtrader.indicator_engine import add_indicators, add_indicators_on_group, add_indicators_tf, FEATURE_CODE, BASE_CODES_ORDERED, BASE_NAMES_ORDERED
 from mtrader.monotonic_stack import monotonic_stack_for_value1_lessthan_value2, monotonic_stack_for_value1_gt_value2
 from mtrader.exit_strategy import precalculate_exit_time_amount_profit
 from mtrader.trading import (
@@ -77,7 +77,7 @@ __all__ = [
     "ema", "evol", "wma", "wvol", "ssma", "ssvol", "rsi", "atr",
     "stoch_k", "stoch_d", "bollinger_b", "obv", "macd", "willr", "cci", "adx", "mfi", "psar", "heikin_ashi",
     "supertrend", "ichimoku", "inside_bar", "bullish_engulfing", "bearish_engulfing",
-    "add_indicators", "add_indicators_on_group", "FEATURE_CODE", "BASE_CODES_ORDERED", "BASE_NAMES_ORDERED",
+    "add_indicators", "add_indicators_on_group", "add_indicators_tf", "FEATURE_CODE", "BASE_CODES_ORDERED", "BASE_NAMES_ORDERED",
     "monotonic_stack_for_value1_lessthan_value2", "monotonic_stack_for_value1_gt_value2",
     "precalculate_exit_time_amount_profit",
     "take_trade_on_condition", "take_trade_on_condition_numpy",

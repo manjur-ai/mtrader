@@ -740,3 +740,135 @@ def add_indicators_on_group(df: pd.DataFrame, group_minutes: list[int], ma: list
         df.loc[~mask, all_aggregated_cols] = np.nan
 
     return df
+
+
+# ── Multi-timeframe indicator helper ─────────────────────────────
+
+def _tf_to_minutes(tf: int | str) -> int:
+    """Convert a timeframe spec to minutes. Returns 0 if not convertible."""
+    if isinstance(tf, int):
+        return tf
+    try:
+        return int(tf)
+    except (ValueError, TypeError):
+        pass
+    s = str(tf).lower().strip()
+    if s.endswith("min") or s.endswith("t"):
+        try:
+            return int(s.rstrip("mint"))
+        except ValueError:
+            return 0
+    if s.endswith("h"):
+        try:
+            return int(s.rstrip("h")) * 60
+        except ValueError:
+            return 0
+    if s.endswith("d"):
+        try:
+            return int(s.rstrip("d")) * 1440
+        except ValueError:
+            return 0
+    if s.endswith("w"):
+        try:
+            return int(s.rstrip("w")) * 10080
+        except ValueError:
+            return 0
+    return 0
+
+
+def _tf_to_rule(tf: int | str) -> str:
+    """Convert a timeframe spec to a pandas resample rule string."""
+    if isinstance(tf, int):
+        return f"{tf}min"
+    s = str(tf).strip().lower()
+    # Already has a valid pandas suffix
+    if any(s.endswith(suf) for suf in ("min", "t", "h", "d", "w", "s", "ms", "us", "ns")):
+        return s
+    # Assume it's minutes without suffix
+    return f"{s}min"
+
+
+def add_indicators_tf(
+    df: pd.DataFrame,
+    add: list[str],
+    tf: list[int | str] | None = None,
+    rolling_minutes: list[int] | None = None,
+) -> pd.DataFrame:
+    """Compute indicators across multiple timeframes from 1-min (or base) data.
+
+    For tf values containing 1: computes indicators using rolling_minutes on the base data.
+    For tf > 1: resamples data to that timeframe, computes indicators, merges back via merge_asof.
+
+    Parameters
+    ----------
+    df : DataFrame with OHLCV data (1-min or base frequency)
+    add : indicator names to compute (e.g., ['sma1', 'ema1', 'rsi'])
+    tf : list of timeframes — int minutes (1, 5, 15, 60, 240) or strings ('1D', '1W')
+    rolling_minutes : rolling window periods for base timeframe (only used when 1 in tf)
+
+    Returns
+    -------
+    DataFrame with indicator columns prefixed by timeframe:
+      can1_sma1_p20   — base timeframe SMA(20)
+      can5_sma1_p20   — 5-min SMA(20) merged onto base bars
+      can15_sma1_p20  — 15-min SMA(20) merged onto base bars
+
+    Usage:
+      df = add_indicators_tf(df, add=['sma1', 'rsi', 'atr'],
+                              tf=[1, 5, 15, 60],
+                              rolling_minutes=[20, 14])
+    """
+    if tf is None:
+        tf = [1]
+
+    result = df.copy()
+    tf_minutes = [_tf_to_minutes(t) for t in tf]
+
+    # Check if tf=1 (base timeframe) is requested
+    has_base = any(m == 1 for m in tf_minutes)
+    if has_base:
+        result = add_indicators(result, add=add, rolling_minutes=rolling_minutes or [])
+
+    from mtrader.advanced import resample_ohlcv, _timeframe_can_prefix
+
+    for t, tm in zip(tf, tf_minutes):
+        if tm == 1:
+            continue  # already computed
+
+        rule = _tf_to_rule(t)
+
+        # Resample to higher timeframe
+        try:
+            higher = resample_ohlcv(result, rule)
+            if len(higher) < 2:
+                continue
+        except Exception:
+            continue
+
+        # Compute indicators on resampled data
+        higher = add_indicators(higher, add=add, rolling_minutes=rolling_minutes or [])
+
+        # Get timeframe prefix
+        try:
+            tp = _timeframe_can_prefix(rule)
+        except Exception:
+            tp = f"can{tm}" if tm > 0 else f"can_{t}"
+
+        # Rename can1_ columns to timeframe prefix
+        feature_cols = [c for c in higher.columns if c.startswith("can1_")]
+        if not feature_cols:
+            continue
+
+        renamed = higher[["datetime"] + feature_cols].rename(
+            columns={c: c.replace("can1_", f"{tp}_", 1) for c in feature_cols}
+        )
+
+        # Merge back to original bars
+        result = pd.merge_asof(
+            result.sort_values("datetime"),
+            renamed.sort_values("datetime"),
+            on="datetime",
+            direction="backward",
+        )
+
+    return result
