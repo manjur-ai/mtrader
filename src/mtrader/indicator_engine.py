@@ -384,7 +384,60 @@ def add_indicators(df: pd.DataFrame, add: list[str], rolling_minutes: list[int] 
                 calc_values = df[col].to_numpy()
                 df[f'can1_{metric}_p{rolling_minute}'] = ssvol(calc_values, rolling_minute)
 
-        for level in range(2, MAX_LEVEL + 1):
+        # Special per-period indicators (computed before normalizations so normalizations can reference them)
+        if "rsi" in full_add:
+            df[f'can1_rsi_p{rolling_minute}'] = rsi(df['close'].to_numpy(), rolling_minute)
+        if "atr" in full_add:
+            df[f'can1_atr_p{rolling_minute}'] = atr(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute)
+        if "stochk" in full_add:
+            df[f'can1_stochk_p{rolling_minute}'] = stoch_k(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute)
+        if "stochd" in full_add:
+            k_col = f'can1_stochk_p{rolling_minute}'
+            if k_col not in df.columns:
+                df[k_col] = stoch_k(
+                    df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute)
+            df[f'can1_stochd_p{rolling_minute}'] = stoch_d(df[k_col].to_numpy(), 3)
+        if "bbp" in full_add:
+            df[f'can1_bbp_p{rolling_minute}'] = bollinger_b(df['close'].to_numpy(), rolling_minute)
+        if "willr" in full_add:
+            df[f'can1_willr_p{rolling_minute}'] = willr(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute)
+        if "cci" in full_add:
+            df[f'can1_cci_p{rolling_minute}'] = cci(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute)
+        if "adx" in full_add:
+            df[f'can1_adx_p{rolling_minute}'] = adx(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute)
+        if "mfi" in full_add:
+            df[f'can1_mfi_p{rolling_minute}'] = mfi(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(),
+                df['volume'].to_numpy(), rolling_minute)
+        if "supertrend" in full_add:
+            st, st_dir = supertrend(
+                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute)
+            df[f'can1_supertrend_p{rolling_minute}'] = st
+            df[f'can1_supertrend_dir_p{rolling_minute}'] = st_dir
+
+        # Distance-to-MA indicators (smadis, emadis, wmadis, ssmadis)
+        for dist_name, ma_name in DIST_TO_MA.items():
+            for code, col in FEATURE_CODE.items():
+                ind_code = f"{dist_name}{code}"
+                ind_col = f"{dist_name}_{col}"
+                if ind_code in full_add or ind_col in full_add:
+                    metric = ind_col if ind_col in full_add else ind_code
+                    ma_code = f'{ma_name}{code}'
+                    ma_col = f'{ma_name}_{col}'
+                    dcol1 = f'can1_{ma_code}_p{rolling_minute}'
+                    dcol2 = f'can1_{ma_col}_p{rolling_minute}'
+                    if dcol1 in df.columns:
+                        df[f'can1_{metric}_p{rolling_minute}'] = df[col] - df[dcol1]
+                    elif dcol2 in df.columns:
+                        df[f'can1_{metric}_p{rolling_minute}'] = df[col] - df[dcol2]
+
+        # Now compute level 1+ normalizations (Z-score, SMN, EMN, WMN, SSMN, SVN, EVN, WVN, SSVN)
+        for level in range(1, MAX_LEVEL + 1):
             for ind in list(full_add):
                 if IND_TO_LEVEL.get(ind, -1) != level:
                     continue
@@ -396,9 +449,14 @@ def add_indicators(df: pd.DataFrame, add: list[str], rolling_minutes: list[int] 
                 norm = ind[:pos]
                 rest = ind[pos + 1:]
 
+                # Skip base indicators and distance indicators (already computed)
+                if norm in BASE_INDICATORS or norm in DIST_TO_MA:
+                    continue
+
                 dcol1 = f'can1_{rest}_p{rolling_minute}'
                 if dcol1 not in df.columns:
-                    raise ValueError(f"Dependency indicator missing: {dcol1}")
+                    # Skip indicators whose dependency isn't ready yet (e.g. non-periodic special indicators)
+                    continue
 
                 source = df[dcol1]
                 soure_rolling = source.rolling(rolling_minute, min_periods=rolling_minute)
@@ -555,45 +613,6 @@ def add_indicators(df: pd.DataFrame, add: list[str], rolling_minutes: list[int] 
             if "or_low" in add:
                 df[f'can1_or_low_p{rolling_minute}'] = df.groupby(df['datetime'].dt.date)[f'can1_or_low_p{rolling_minute}'].ffill()
 
-        if "rsi" in full_add:
-            df[f'can1_rsi_p{rolling_minute}'] = rsi(df['close'].to_numpy(), rolling_minute)
-        if "atr" in full_add:
-            df[f'can1_atr_p{rolling_minute}'] = atr(
-                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute
-            )
-        if "stochk" in full_add:
-            df[f'can1_stochk_p{rolling_minute}'] = stoch_k(
-                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute
-            )
-        if "stochd" in full_add:
-            k_col = f'can1_stochk_p{rolling_minute}'
-            if k_col not in df.columns:
-                df[k_col] = stoch_k(
-                    df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute
-                )
-            df[f'can1_stochd_p{rolling_minute}'] = stoch_d(df[k_col].to_numpy(), 3)
-        if "bbp" in full_add:
-            df[f'can1_bbp_p{rolling_minute}'] = bollinger_b(df['close'].to_numpy(), rolling_minute)
-        if "willr" in full_add:
-            df[f'can1_willr_p{rolling_minute}'] = willr(
-                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute)
-        if "cci" in full_add:
-            df[f'can1_cci_p{rolling_minute}'] = cci(
-                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute)
-        if "adx" in full_add:
-            df[f'can1_adx_p{rolling_minute}'] = adx(
-                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute)
-        if "mfi" in full_add:
-            df[f'can1_mfi_p{rolling_minute}'] = mfi(
-                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(),
-                df['volume'].to_numpy(), rolling_minute)
-        if "supertrend" in full_add:
-            st, st_dir = supertrend(
-                df['high'].to_numpy(), df['low'].to_numpy(), df['close'].to_numpy(), rolling_minute
-            )
-            df[f'can1_supertrend_p{rolling_minute}'] = st
-            df[f'can1_supertrend_dir_p{rolling_minute}'] = st_dir
-
     if "macd" in full_add:
         ml, ms, mh = macd(df['close'].to_numpy())
         df['can1_macd'] = ml
@@ -658,6 +677,9 @@ def add_indicators(df: pd.DataFrame, add: list[str], rolling_minutes: list[int] 
     source_columns = {"datetime", "open", "high", "low", "close", "volume"}
     column_temp_added = [c for c in (full_add - set(add)) if c in df.columns and c not in source_columns]
     df.drop(columns=column_temp_added, inplace=True)
+
+    # Defragment to avoid PerformanceWarning from repeated column insertion
+    df = df.copy()
 
     return df
 

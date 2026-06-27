@@ -74,6 +74,65 @@ def atr_risk_size(entry_price: np.ndarray, atr_values: np.ndarray, equity: np.nd
     return np.divide(risk_amount, risk_per_unit, out=np.zeros_like(entry_price), where=risk_per_unit > 0)
 
 
+def add_trailing_stop_column(df: pd.DataFrame, trail_pct: float = 0.5, lookback: int | None = None,
+                             high_col: str = "high", low_col: str = "low") -> pd.DataFrame:
+    """Add a trailing stop price column (`trailing_stop_price`) for trailing stop exits.
+
+    For each bar j, the trailing stop price is:
+        max(high[max(0, j-lookback):j+1]) * (1 - trail_pct/100)
+
+    If lookback is None, uses expanding maximum from start of data.
+    For use with stoploss_delta_column in run_backtest:
+        df['trailing_sl_delta'] = df['close'] - df['trailing_stop_price']
+        run_backtest(..., stoploss_delta_column='trailing_sl_delta')
+    """
+    if lookback is not None:
+        trail_high = df[high_col].rolling(window=lookback, min_periods=1).max()
+    else:
+        trail_high = df[high_col].expanding(min_periods=1).max()
+    df["trailing_stop_price"] = trail_high * (1.0 - trail_pct / 100.0)
+    return df
+
+
+def add_time_filter_column(df: pd.DataFrame, start_time: str | None = None, end_time: str | None = None,
+                           time_col: str = "datetime") -> pd.DataFrame:
+    """Add a `time_filter` boolean column for restricting trades to specific trading hours.
+
+    True for bars within [start_time, end_time). Pass to entry/exit conditions:
+        entry_conditions = [
+            [condition("close", "can1_sma1_p20", lower=0),
+             condition("time_filter", lower=1)],  # only trade during filtered hours
+        ]
+    """
+    from mtrader.utils import timenum
+    if start_time is None:
+        start_num = -np.inf
+    else:
+        start_num = timenum(start_time)
+    if end_time is None:
+        end_num = np.inf
+    else:
+        end_num = timenum(end_time)
+    df["time_filter"] = df[time_col].apply(
+        lambda x: start_num <= (x.hour * 60 + x.minute) < end_num
+    ).astype(float)
+    return df
+
+
+def add_regime_filter_column(df: pd.DataFrame, adx_period: int = 14, adx_threshold: float = 25.0,
+                             adx_col: str = "can1_adx_p14") -> pd.DataFrame:
+    """Add a `regime_filter` boolean column: True when ADX >= threshold (trending market).
+
+    For ranging markets, invert with condition("regime_filter", upper=1) (i.e., regime_filter == 0).
+    Requires 'adx' indicator to be pre-computed via add_indicators.
+    """
+    if adx_col not in df.columns:
+        from mtrader.indicator_engine import add_indicators
+        df = add_indicators(df, add=["adx"], rolling_minutes=[adx_period])
+    df["regime_filter"] = (df[adx_col] >= adx_threshold).astype(float)
+    return df
+
+
 def apply_risk_controls(
     trades: pd.DataFrame,
     max_trades_per_day: int | None = None,
@@ -115,7 +174,7 @@ def apply_risk_controls(
 
 
 def resample_ohlcv(df: pd.DataFrame, rule: str, label: str = "right", closed: str = "right") -> pd.DataFrame:
-    """Resample OHLCV data to a higher timeframe (e.g. '5T', '1H'). Open=first, high=max, low=min, close=last, volume=sum."""
+    """Resample OHLCV data to a higher timeframe (e.g. '5min', '1h'). Open=first, high=max, low=min, close=last, volume=sum."""
     required = {"datetime", "open", "high", "low", "close"}
     missing = sorted(required - set(df.columns))
     if missing:
@@ -124,7 +183,8 @@ def resample_ohlcv(df: pd.DataFrame, rule: str, label: str = "right", closed: st
     agg = {"open": "first", "high": "max", "low": "min", "close": "last"}
     if "volume" in data.columns:
         agg["volume"] = "sum"
-    out = data.resample(rule, label=label, closed=closed).agg(agg).dropna(subset=["open", "high", "low", "close"])
+    rule_clean = rule.replace("T", "min").replace("t", "min")
+    out = data.resample(rule_clean, label=label, closed=closed).agg(agg).dropna(subset=["open", "high", "low", "close"])
     return out.reset_index()
 
 
@@ -147,7 +207,8 @@ def add_higher_timeframe_indicators(df: pd.DataFrame, rule: str, add: list[str],
 
 
 def _timeframe_can_prefix(rule: str) -> str:
-    offset = pd.tseries.frequencies.to_offset(rule)
+    rule_clean = rule.replace("T", "min").replace("t", "min")
+    offset = pd.tseries.frequencies.to_offset(rule_clean)
     nanos = pd.Timedelta(offset).value
     minutes = nanos // pd.Timedelta(minutes=1).value
     if minutes <= 0 or nanos % pd.Timedelta(minutes=1).value != 0:
@@ -171,6 +232,13 @@ class Strategy:
     initial_capital: float = 1000.0
     risk_free_rate: float = 0.0
     trading_cost_factor: float = 0.0002
+    capital_per_trade_pct: float = 1.0
+    sizing_fn: Callable | None = None
+    min_hold_bars: int = 0
+    max_hold_bars: int | None = None
+    max_trades_per_day: int | None = None
+    cooldown_bars: int = 0
+    max_daily_loss_pct: float | None = None
 
     def run(self, df: pd.DataFrame, **overrides: Any) -> Any:
         """Run a backtest using this strategy's parameters, optionally overriding any field."""
@@ -193,6 +261,13 @@ class Strategy:
             initial_capital=params["initial_capital"],
             risk_free_rate=params["risk_free_rate"],
             trading_cost_factor=params["trading_cost_factor"],
+            capital_per_trade_pct=params["capital_per_trade_pct"],
+            sizing_fn=params.get("sizing_fn"),
+            min_hold_bars=params.get("min_hold_bars", 0),
+            max_hold_bars=params.get("max_hold_bars"),
+            max_trades_per_day=params["max_trades_per_day"],
+            cooldown_bars=params["cooldown_bars"],
+            max_daily_loss_pct=params["max_daily_loss_pct"],
         )
 
     def to_live(self, history_df: pd.DataFrame, **overrides: Any) -> Any:
@@ -231,6 +306,13 @@ class Strategy:
             "initial_capital": self.initial_capital,
             "risk_free_rate": self.risk_free_rate,
             "trading_cost_factor": self.trading_cost_factor,
+            "capital_per_trade_pct": self.capital_per_trade_pct,
+            "sizing_fn": None,  # callable not serializable
+            "min_hold_bars": self.min_hold_bars,
+            "max_hold_bars": self.max_hold_bars,
+            "max_trades_per_day": self.max_trades_per_day,
+            "cooldown_bars": self.cooldown_bars,
+            "max_daily_loss_pct": self.max_daily_loss_pct,
         }
 
     @classmethod
@@ -253,6 +335,12 @@ class Strategy:
             initial_capital=data.get("initial_capital", 1000.0),
             risk_free_rate=data.get("risk_free_rate", 0.0),
             trading_cost_factor=data.get("trading_cost_factor", 0.0002),
+            capital_per_trade_pct=data.get("capital_per_trade_pct", 1.0),
+            min_hold_bars=data.get("min_hold_bars", 0),
+            max_hold_bars=data.get("max_hold_bars"),
+            max_trades_per_day=data.get("max_trades_per_day"),
+            cooldown_bars=data.get("cooldown_bars", 0),
+            max_daily_loss_pct=data.get("max_daily_loss_pct"),
         )
 
     def save(self, path: str) -> Path:

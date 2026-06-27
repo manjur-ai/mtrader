@@ -25,8 +25,10 @@ from mtrader.backtest import (
     condition,
     cross_above,
     cross_below,
+    find_best_entry_conditions,
     parameter_grid,
     run_backtest,
+    run_scenarios,
     trade_log,
     validate_ohlcv,
     walk_forward_splits,
@@ -35,6 +37,9 @@ from mtrader.advanced import (
     CostModel,
     Strategy,
     add_higher_timeframe_indicators,
+    add_regime_filter_column,
+    add_time_filter_column,
+    add_trailing_stop_column,
     apply_risk_controls,
     atr_risk_size,
     crypto_cost_model,
@@ -60,6 +65,11 @@ from mtrader.live import (
     live_strategy_from_history,
     stream_live_signals,
 )
+from mtrader.strategy_discovery import (
+    discover_strategies,
+    quick_rank_strategies,
+    StrategyCandidate,
+)
 
 __all__ = [
     "printo", "print", "timenum",
@@ -80,9 +90,10 @@ __all__ = [
     "equity_curve",
     "html_backtest_report",
     "BacktestResult", "condition", "cross_above", "cross_below",
-    "parameter_grid", "run_backtest", "trade_log", "validate_ohlcv",
-    "walk_forward_splits",
+    "find_best_entry_conditions", "parameter_grid", "run_backtest",
+    "run_scenarios", "trade_log", "validate_ohlcv", "walk_forward_splits",
     "CostModel", "Strategy", "add_higher_timeframe_indicators",
+    "add_regime_filter_column", "add_time_filter_column", "add_trailing_stop_column",
     "apply_risk_controls", "atr_risk_size", "crypto_cost_model",
     "fixed_capital_size", "fixed_quantity_size", "grid_from_ranges",
     "india_intraday_cost_model", "percent_equity_size",
@@ -91,4 +102,5 @@ __all__ = [
     "LiveIndicatorEngine", "LiveStrategyEngine", "convert_conditions_to_live",
     "live_column_name", "live_indicators_from_backtest", "live_signal_from_history",
     "live_strategy_from_history", "stream_live_signals",
+    "discover_strategies", "quick_rank_strategies", "StrategyCandidate",
 ]

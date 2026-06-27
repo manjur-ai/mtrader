@@ -2,7 +2,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from itertools import product
-from typing import Any
+from typing import Any, Callable
 
 try:
     import cupy as cp
@@ -10,12 +10,13 @@ try:
 except ImportError:
     has_cupy = False
 
-def take_trade_on_condition(df: pd.DataFrame, conditions: list[list[dict[str, Any]]], cupy: bool = False, leverage: float = 1, initial_capital: float = 1000, risk_free_rate: float = 0) -> tuple[pd.DataFrame, float, dict[str, Any]]:
-    """Evaluate entry conditions and compute trade entries, capital progression, and metrics (Sharpe, drawdown). Supports optional CuPy acceleration."""
+def take_trade_on_condition(df: pd.DataFrame, conditions: list[list[dict[str, Any]]], cupy: bool = False, leverage: float = 1, initial_capital: float = 1000, risk_free_rate: float = 0, capital_per_trade_pct: float = 1.0) -> tuple[pd.DataFrame, float, dict[str, Any]]:
+    """Evaluate entry conditions and compute trade entries, capital progression, and metrics (Sharpe, drawdown). Supports optional CuPy acceleration and fractional capital deployment."""
     if cupy and has_cupy:
         array_lib = cp
     else:
         array_lib = np
+    capital_per_trade_pct = float(capital_per_trade_pct)
 
     condition_met_all = array_lib.ones(len(df), dtype=bool)
     for condition_group in conditions:
@@ -46,11 +47,15 @@ def take_trade_on_condition(df: pd.DataFrame, conditions: list[list[dict[str, An
 
     capital_at_exit = array_lib.zeros(len(df), dtype=float)
     if len(valid_trade_indices) > 0:
-        capital_at_exit[valid_trade_indices[0]] = initial_capital
-        capital_multiplier = array_lib.ones(len(df), dtype=float)
-        capital_multiplier[valid_trade_indices] = next_exit_capital_multiplier[valid_trade_indices] / 100
-        cumulative_capital = array_lib.cumprod(capital_multiplier[valid_trade_indices]) * initial_capital
-        capital_at_exit[valid_trade_indices] = cumulative_capital
+        capital_before = array_lib.float64(initial_capital)
+        for idx in range(len(valid_trade_indices)):
+            trade_idx = valid_trade_indices[idx]
+            deploy = capital_before * capital_per_trade_pct
+            cash = capital_before - deploy
+            multiplier = next_exit_capital_multiplier[trade_idx] / 100.0
+            capital_after = deploy * multiplier + cash
+            capital_at_exit[trade_idx] = capital_after
+            capital_before = capital_after
 
     df["take_trade"] = take_trade.get() if cupy and has_cupy else take_trade
     df["capital_at_exit"] = capital_at_exit.get() if cupy and has_cupy else capital_at_exit
@@ -59,15 +64,15 @@ def take_trade_on_condition(df: pd.DataFrame, conditions: list[list[dict[str, An
 
     final_capital = capital_at_exit[take_trade][-1] if array_lib.any(take_trade) else initial_capital
 
-    capital_at_exit = capital_at_exit[capital_at_exit > 0]
-    if len(capital_at_exit) > 1:
-        log_capital_at_exit = array_lib.log(array_lib.clip(capital_at_exit, 1e-10, None))
+    positive_capital = capital_at_exit[capital_at_exit > 0]
+    if len(positive_capital) > 1:
+        log_capital_at_exit = array_lib.log(array_lib.clip(positive_capital, 1e-10, None))
         log_returns = log_capital_at_exit[1:] - log_capital_at_exit[:-1]
         volatility = array_lib.std(log_returns)
         mean_log_return = array_lib.mean(log_returns)
         sharpe_ratio = (mean_log_return - risk_free_rate) / volatility if volatility > 0 else float('nan')
-        peak_capital = array_lib.maximum.accumulate(capital_at_exit)
-        drawdowns = (peak_capital - capital_at_exit) / peak_capital
+        peak_capital = array_lib.maximum.accumulate(positive_capital)
+        drawdowns = (peak_capital - positive_capital) / peak_capital
         max_drawdown = array_lib.max(drawdowns) * 100 if len(drawdowns) > 0 else 0
     else:
         volatility = 0.0
@@ -83,8 +88,12 @@ def take_trade_on_condition(df: pd.DataFrame, conditions: list[list[dict[str, An
     return df_filtered, final_capital, metrics
 
 
-def take_trade_on_condition_numpy(df: pd.DataFrame, conditions: list[list[dict[str, Any]]], leverage: float = 1, initial_capital: float = 1000, risk_free_rate: float = 0) -> tuple[pd.DataFrame, float, dict[str, Any]]:
-    """NumPy-only entry evaluation (no CuPy). Validates inputs, finds first-occurrence trades, computes cumulative capital and metrics."""
+def take_trade_on_condition_numpy(df: pd.DataFrame, conditions: list[list[dict[str, Any]]], leverage: float = 1, initial_capital: float = 1000, risk_free_rate: float = 0, capital_per_trade_pct: float = 1.0, sizing_fn: Callable | None = None) -> tuple[pd.DataFrame, float, dict[str, Any]]:
+    """NumPy-only entry evaluation (no CuPy). Validates inputs, finds first-occurrence trades, computes cumulative capital and metrics.
+    
+    capital_per_trade_pct: fraction of current capital to deploy per trade (0.0-1.0, default 1.0).
+    sizing_fn: optional callable(entry_idx, capital_before, df) -> float, overrides capital_per_trade_pct per trade.
+    """
     if not isinstance(conditions, list) or len(conditions) == 0:
         raise ValueError("conditions must be a non-empty list of condition groups")
     for i, group in enumerate(conditions):
@@ -100,6 +109,9 @@ def take_trade_on_condition_numpy(df: pd.DataFrame, conditions: list[list[dict[s
         raise ValueError(f"initial_capital must be > 0, got {initial_capital}")
     if not isinstance(risk_free_rate, (int, float)):
         raise ValueError(f"risk_free_rate must be a number, got {type(risk_free_rate).__name__}")
+    capital_per_trade_pct = float(capital_per_trade_pct)
+    if not 0.0 <= capital_per_trade_pct <= 1.0:
+        raise ValueError(f"capital_per_trade_pct must be between 0 and 1, got {capital_per_trade_pct}")
 
     condition_met_all = np.ones(len(df), dtype=bool)
     for condition_group in conditions:
@@ -126,10 +138,16 @@ def take_trade_on_condition_numpy(df: pd.DataFrame, conditions: list[list[dict[s
     capital_at_exit = np.zeros(len(df), dtype=float)
     if len(valid_trade_indices) > 0:
         capital_at_exit[valid_trade_indices[0]] = initial_capital
-        capital_multiplier = np.ones(len(df), dtype=float)
-        capital_multiplier[valid_trade_indices] = next_exit_capital_multiplier[valid_trade_indices] / 100
-        cumulative_capital = np.cumprod(capital_multiplier[valid_trade_indices]) * initial_capital
-        capital_at_exit[valid_trade_indices] = cumulative_capital
+        capital_before_trade = initial_capital
+        for idx in range(len(valid_trade_indices)):
+            trade_idx = valid_trade_indices[idx]
+            pct = sizing_fn(trade_idx, capital_before_trade, df) if sizing_fn else capital_per_trade_pct
+            deploy = capital_before_trade * pct
+            cash = capital_before_trade - deploy
+            multiplier = next_exit_capital_multiplier[trade_idx] / 100.0
+            capital_after = deploy * multiplier + cash
+            capital_at_exit[trade_idx] = capital_after
+            capital_before_trade = capital_after
 
     df["take_trade"] = take_trade
     df["capital_at_exit"] = capital_at_exit
@@ -617,8 +635,12 @@ def take_trade_on_condition_vectorized2(
 def update_cond(data: Any, new_first_column_name: str, new_second_column_name: str,
                 shift1: int | None = None, shift2: int | None = None,
                 lower: float | None = None, upper: float | None = None,
-                norm: bool | None = None) -> Any:
-    """Recursively update condition fields (first/second column names, shifts, ranges, normalization) in nested dicts/lists."""
+                norm: bool | None = None,
+                match_first: str | None = None) -> Any:
+    """Recursively update condition fields in nested dicts/lists.
+
+    By default updates ALL condition dicts (those containing 'first_column_name').
+    If match_first is set, only updates conditions where first_column_name == match_first."""
     updates = {
         "first_column_name": new_first_column_name,
         "second_column_name": new_second_column_name,
@@ -636,11 +658,12 @@ def update_cond(data: Any, new_first_column_name: str, new_second_column_name: s
 
     if isinstance(data, list):
         return [update_cond(item, new_first_column_name, new_second_column_name,
-                            shift1, shift2, lower, upper, norm) for item in data]
+                            shift1, shift2, lower, upper, norm, match_first) for item in data]
     elif isinstance(data, dict):
-        if data.get("first_column_name") == "ind_fast":
-            data.update(updates)
+        if "first_column_name" in data:
+            if match_first is None or data.get("first_column_name") == match_first:
+                data.update(updates)
         return {key: update_cond(value, new_first_column_name, new_second_column_name,
-                                 shift1, shift2, lower, upper, norm) for key, value in data.items()}
+                                 shift1, shift2, lower, upper, norm, match_first) for key, value in data.items()}
     else:
         return data
