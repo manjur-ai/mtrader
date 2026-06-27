@@ -40,19 +40,32 @@ def _rolling_minmax(values: np.ndarray, period: int, find_max: bool) -> np.ndarr
 def ema(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
     """Exponential Moving Average. EMA = (prev * (p-1) + value * 2) / (p+1) where p = period."""
     n = len(source_numpy)
-    ema_values = np.zeros(n, dtype=np.float64)
+    if n == 0:
+        return np.array([], dtype=np.float64)
 
-    for i in range(n):
-        if i == 0:
-            ema_values[i] = source_numpy[i]
-        elif i < rolling_minute:
-            ema_values[i] = (ema_values[i - 1] * i + source_numpy[i] * 2.0) / (i + 2.0)
+    period = rolling_minute
+    out = np.zeros(n, dtype=np.float64)
+    out[0] = source_numpy[0]
+
+    if n == 1:
+        return out
+
+    warmup_end = min(period, n)
+    for i in range(1, warmup_end):
+        out[i] = (out[i - 1] * i + source_numpy[i] * 2.0) / (i + 2.0)
+
+    if n > period:
+        alpha = 2.0 / (period + 1.0)
+        y = pd.Series(source_numpy).ewm(alpha=alpha, adjust=False).mean().to_numpy(dtype=np.float64)
+        diff = out[period - 1] - y[period - 1]
+        if abs(diff) > 1e-15:
+            decay = 1.0 - alpha
+            k_arr = np.arange(1, n - period + 1, dtype=np.float64)
+            out[period:] = y[period:] + diff * (decay ** k_arr)
         else:
-            ema_values[i] = (
-                ema_values[i - 1] * (rolling_minute - 1.0) + source_numpy[i] * 2.0
-            ) / (rolling_minute + 1.0)
+            out[period:] = y[period:]
 
-    return ema_values
+    return out
 
 
 def evol(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
@@ -102,17 +115,32 @@ def wvol(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
 def ssma(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
     """Simple Smoothed Moving Average (equivalent to Wilder's smoothing)."""
     n = len(source_numpy)
-    ssma_values = np.zeros(n, dtype=np.float64)
+    if n == 0:
+        return np.array([], dtype=np.float64)
 
-    for i in range(n):
-        if i == 0:
-            ssma_values[i] = source_numpy[i]
-        elif i < rolling_minute:
-            ssma_values[i] = (ssma_values[i - 1] * i + source_numpy[i]) / (i + 1.0)
+    period = rolling_minute
+    out = np.zeros(n, dtype=np.float64)
+    out[0] = source_numpy[0]
+
+    if n == 1:
+        return out
+
+    warmup_end = min(period, n)
+    for i in range(1, warmup_end):
+        out[i] = (out[i - 1] * i + source_numpy[i]) / (i + 1.0)
+
+    if n > period:
+        alpha = 1.0 / period
+        y = pd.Series(source_numpy).ewm(alpha=alpha, adjust=False).mean().to_numpy(dtype=np.float64)
+        diff = out[period - 1] - y[period - 1]
+        if abs(diff) > 1e-15:
+            decay = 1.0 - alpha
+            k_arr = np.arange(1, n - period + 1, dtype=np.float64)
+            out[period:] = y[period:] + diff * (decay ** k_arr)
         else:
-            ssma_values[i] = (ssma_values[i - 1] * (rolling_minute - 1.0) + source_numpy[i]) / rolling_minute
+            out[period:] = y[period:]
 
-    return ssma_values
+    return out
 
 
 def ssvol(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
@@ -135,19 +163,18 @@ def rsi(close: np.ndarray, period: int) -> np.ndarray:
     diffs = np.diff(close)
     gains = np.where(diffs > 0, diffs, 0.0)
     losses = np.where(diffs < 0, -diffs, 0.0)
-    cum_gain = np.cumsum(gains)
-    cum_loss = np.cumsum(losses)
-    for i in range(period, n):
-        if i == period:
-            avg_gain = cum_gain[period - 1] / period
-            avg_loss = cum_loss[period - 1] / period
-        else:
-            avg_gain = (avg_gain * (period - 1) + gains[i - 1]) / period
-            avg_loss = (avg_loss * (period - 1) + losses[i - 1]) / period
-        if avg_loss == 0.0:
-            out[i] = 100.0 if avg_gain > 0 else 50.0
-        else:
-            out[i] = 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)
+
+    avg_gain = ssma(gains, period)
+    avg_loss = ssma(losses, period)
+
+    gain_part = avg_gain[period - 1:]
+    loss_part = avg_loss[period - 1:]
+    rs = np.full(n - period, 50.0, dtype=np.float64)
+    mask = loss_part > 0
+    rs[mask] = 100.0 - 100.0 / (1.0 + gain_part[mask] / loss_part[mask])
+    mask2 = (loss_part == 0) & (gain_part > 0)
+    rs[mask2] = 100.0
+    out[period:] = rs
     return out
 
 
@@ -255,11 +282,13 @@ def cci(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 20) 
     n = len(close)
     tp = (high + low + close) / 3.0
     out = np.full(n, np.nan, dtype=np.float64)
-    for i in range(period - 1, n):
-        seg = tp[i - period + 1:i + 1]
-        mu = np.mean(seg)
-        mad = np.mean(np.abs(seg - mu))
-        out[i] = (tp[i] - mu) / (0.015 * mad) if mad != 0 else 0.0
+    if n < period or period <= 1:
+        return out
+    idx = np.arange(period)[None, :] + np.arange(n - period + 1)[:, None]
+    windows = tp[idx]
+    mu = np.mean(windows, axis=1)
+    mad = np.mean(np.abs(windows - mu[:, None]), axis=1)
+    out[period - 1:] = np.where(mad != 0, (tp[period - 1:] - mu) / (0.015 * mad), 0.0)
     return out
 
 
