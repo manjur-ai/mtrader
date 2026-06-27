@@ -314,6 +314,13 @@ def discover_strategies(
     metric: str = "sharpe",
     top_n: int = 10,
     initial_capital: float = 10000,
+    capital_per_trade_pct: float = 1.0,
+    sizing_fn: Callable | None = None,
+    min_hold_bars: int = 0,
+    max_hold_bars: int | None = None,
+    max_trades_per_day: int | None = None,
+    cooldown_bars: int = 0,
+    max_daily_loss_pct: float | None = None,
     verbose: bool = True,
 ) -> tuple[pd.DataFrame, list[StrategyCandidate]]:
     """Auto-discover profitable strategies from OHLCV data.
@@ -337,6 +344,13 @@ def discover_strategies(
     metric : ranking metric ("sharpe", "sortino", "calmar", "profit_factor", "final_capital")
     top_n : number of top candidates to walk-forward validate
     initial_capital : starting capital for backtests
+    capital_per_trade_pct : fraction of capital deployed per trade (0-1)
+    sizing_fn : optional callable(entry_idx, capital_before, df) -> float for per-trade sizing
+    min_hold_bars : minimum bars a trade must be held (shorter ones filtered)
+    max_hold_bars : maximum bars a trade can be held (longer ones filtered)
+    max_trades_per_day : max entries per trading day
+    cooldown_bars : minimum bars between consecutive trades
+    max_daily_loss_pct : stop trading for the day if loss exceeds this %
     verbose : print progress
 
     Returns
@@ -425,6 +439,13 @@ def discover_strategies(
                     target_delta_normalized=cand.target_delta_normalized,
                     stoploss_delta_normalized=cand.stoploss_delta_normalized,
                     initial_capital=initial_capital,
+                    capital_per_trade_pct=capital_per_trade_pct,
+                    sizing_fn=sizing_fn,
+                    min_hold_bars=min_hold_bars,
+                    max_hold_bars=max_hold_bars,
+                    max_trades_per_day=max_trades_per_day,
+                    cooldown_bars=cooldown_bars,
+                    max_daily_loss_pct=max_daily_loss_pct,
                 )
                 if metric == "sharpe":
                     score = r.metrics.get("Sharpe Ratio", -999)
@@ -487,6 +508,13 @@ def discover_strategies(
                     target_delta_normalized=cand.target_delta_normalized,
                     stoploss_delta_normalized=cand.stoploss_delta_normalized,
                     initial_capital=initial_capital,
+                    capital_per_trade_pct=capital_per_trade_pct,
+                    sizing_fn=sizing_fn,
+                    min_hold_bars=min_hold_bars,
+                    max_hold_bars=max_hold_bars,
+                    max_trades_per_day=max_trades_per_day,
+                    cooldown_bars=cooldown_bars,
+                    max_daily_loss_pct=max_daily_loss_pct,
                 )
                 if metric == "sharpe":
                     s = r.metrics.get("Sharpe Ratio", -999)
@@ -522,6 +550,13 @@ def quick_rank_strategies(
     strategies: list[StrategyCandidate],
     metric: str = "sharpe",
     initial_capital: float = 10000,
+    capital_per_trade_pct: float = 1.0,
+    sizing_fn: Callable | None = None,
+    min_hold_bars: int = 0,
+    max_hold_bars: int | None = None,
+    max_trades_per_day: int | None = None,
+    cooldown_bars: int = 0,
+    max_daily_loss_pct: float | None = None,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Quickly rank a list of pre-defined strategies on the given data.
@@ -555,6 +590,13 @@ def quick_rank_strategies(
                 target_delta_normalized=s.target_delta_normalized,
                 stoploss_delta_normalized=s.stoploss_delta_normalized,
                 initial_capital=initial_capital,
+                capital_per_trade_pct=capital_per_trade_pct,
+                sizing_fn=sizing_fn,
+                min_hold_bars=min_hold_bars,
+                max_hold_bars=max_hold_bars,
+                max_trades_per_day=max_trades_per_day,
+                cooldown_bars=cooldown_bars,
+                max_daily_loss_pct=max_daily_loss_pct,
             )
             score = r.metrics.get("Sharpe Ratio", r.final_capital)
             rows.append({
