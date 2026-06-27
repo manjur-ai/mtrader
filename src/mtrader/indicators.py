@@ -154,27 +154,28 @@ def ssvol(source_numpy: np.ndarray, rolling_minute: int) -> np.ndarray:
 
 def rsi(close: np.ndarray, period: int) -> np.ndarray:
     """Relative Strength Index. RSI = 100 - 100 / (1 + avg_gain / avg_loss) over the given period."""
+    close = np.asarray(close, dtype=np.float64)
     n = len(close)
     out = np.full(n, np.nan, dtype=np.float64)
-    if period <= 0:
-        raise ValueError("period must be a positive integer")
-    if n < 2:
+    if n < period + 1:
         return out
     diffs = np.diff(close)
     gains = np.where(diffs > 0, diffs, 0.0)
     losses = np.where(diffs < 0, -diffs, 0.0)
-
-    avg_gain = ssma(gains, period)
-    avg_loss = ssma(losses, period)
-
-    gain_part = avg_gain[period - 1:]
-    loss_part = avg_loss[period - 1:]
-    rs = np.full(n - period, 50.0, dtype=np.float64)
-    mask = loss_part > 0
-    rs[mask] = 100.0 - 100.0 / (1.0 + gain_part[mask] / loss_part[mask])
-    mask2 = (loss_part == 0) & (gain_part > 0)
-    rs[mask2] = 100.0
-    out[period:] = rs
+    cum_gain = np.cumsum(gains)
+    cum_loss = np.cumsum(losses)
+    for i in range(period - 1, n):
+        if i == period - 1:
+            avg_gain = cum_gain[i] / period
+            avg_loss = cum_loss[i] / period
+        else:
+            avg_gain = (avg_gain * (period - 1) + gains[i - 1]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i - 1]) / period
+        if avg_loss == 0.0:
+            out[i] = 100.0 if avg_gain > 0 else 50.0
+        else:
+            out[i] = 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)
+    return out
     return out
 
 

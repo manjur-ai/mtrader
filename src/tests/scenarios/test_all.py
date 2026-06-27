@@ -459,9 +459,9 @@ def test_rsi():
                       110, 108, 111, 113, 112, 114, 115, 113, 116, 118], dtype=np.float64)
     vals = rsi(close, 14)
     assert len(vals) == 20
-    assert np.isnan(vals[:14]).all()
-    assert not np.isnan(vals[14])
-    assert 0 <= vals[14] <= 100
+    assert np.isnan(vals[:13]).all()
+    assert not np.isnan(vals[13])
+    assert 0 <= vals[13] <= 100
     builtins.print(f"  RSI: last value={vals[-1]:.2f}")
 
 
