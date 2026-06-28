@@ -46,6 +46,82 @@ SESSION = {
 }
 
 
+def _compute_weekly_consistency(
+    trades_df: pd.DataFrame,
+    initial_capital: float = 10000,
+) -> dict[str, float]:
+    """Compute weekly performance metrics from a trade log.
+
+    Returns dict with:
+      total_weeks, profitable_weeks, consistency (profitable/total),
+      weekly_sharpe (mean weekly return / std weekly return),
+      avg_weekly_return_pct, weekly_volatility_pct
+    """
+    if trades_df.empty or len(trades_df) < 2:
+        return {
+            "total_weeks": 0,
+            "profitable_weeks": 0,
+            "consistency": 0.0,
+            "weekly_sharpe": 0.0,
+            "avg_weekly_return_pct": 0.0,
+            "weekly_volatility_pct": 0.0,
+        }
+
+    df = trades_df.copy()
+    if "exit_time" in df.columns:
+        time_col = "exit_time"
+    elif "entry_time" in df.columns:
+        time_col = "entry_time"
+    else:
+        return {
+            "total_weeks": 0,
+            "profitable_weeks": 0,
+            "consistency": 0.0,
+            "weekly_sharpe": 0.0,
+            "avg_weekly_return_pct": 0.0,
+            "weekly_volatility_pct": 0.0,
+        }
+
+    # Group by ISO week
+    df["week"] = pd.to_datetime(df[time_col]).dt.isocalendar().week.astype(int)
+    df["year"] = pd.to_datetime(df[time_col]).dt.isocalendar().year.astype(int)
+    df["week_key"] = df["year"].astype(str) + "-W" + df["week"].astype(str).str.zfill(2)
+
+    # Profit per trade
+    if "profit" in df.columns:
+        profit_col = "profit"
+    elif "capital_return_pct" in df.columns:
+        profit_col = "capital_return_pct"
+    else:
+        return {
+            "total_weeks": 0,
+            "profitable_weeks": 0,
+            "consistency": 0.0,
+            "weekly_sharpe": 0.0,
+            "avg_weekly_return_pct": 0.0,
+            "weekly_volatility_pct": 0.0,
+        }
+
+    weekly_pnl = df.groupby("week_key")[profit_col].sum()
+    total_weeks = len(weekly_pnl)
+    profitable_weeks = int((weekly_pnl > 0).sum())
+    consistency = profitable_weeks / total_weeks if total_weeks > 0 else 0.0
+
+    weekly_returns_pct = (weekly_pnl / initial_capital) * 100.0
+    avg_ret = float(np.mean(weekly_returns_pct)) if len(weekly_returns_pct) > 0 else 0.0
+    std_ret = float(np.std(weekly_returns_pct)) if len(weekly_returns_pct) > 1 else 0.0
+    weekly_sharpe = (avg_ret / std_ret) if std_ret > 0 else 0.0
+
+    return {
+        "total_weeks": total_weeks,
+        "profitable_weeks": profitable_weeks,
+        "consistency": consistency,
+        "weekly_sharpe": weekly_sharpe,
+        "avg_weekly_return_pct": avg_ret,
+        "weekly_volatility_pct": std_ret,
+    }
+
+
 @dataclass
 class StrategyCandidate:
     """A single strategy definition produced by the discovery system."""
@@ -321,6 +397,7 @@ def discover_strategies(
     max_trades_per_day: int | None = None,
     cooldown_bars: int = 0,
     max_daily_loss_pct: float | None = None,
+    min_trades: int = 10,
     verbose: bool = True,
 ) -> tuple[pd.DataFrame, list[StrategyCandidate]]:
     """Auto-discover profitable strategies from OHLCV data.
@@ -329,8 +406,9 @@ def discover_strategies(
     1. Generate candidate strategies from multiple indicator families
     2. Pre-compute all required indicators ONCE
     3. Evaluate each candidate on training data
-    4. Validate top candidates on out-of-sample test data
-    5. Return ranked results + best StrategyCandidate objects
+    4. Filter by min_trades (avoid low-significance strategies)
+    5. Validate top candidates on out-of-sample test data
+    6. Return ranked results + best StrategyCandidate objects
 
     Parameters
     ----------
@@ -341,7 +419,8 @@ def discover_strategies(
                      "psar", "supertrend", "vwap", "price_action"
     exit_targets : list of target_delta_normalized values to try (None = condition-only)
     exit_stops : list of stoploss_delta_normalized values to try
-    metric : ranking metric ("sharpe", "sortino", "calmar", "profit_factor", "final_capital")
+    metric : ranking metric ("sharpe", "sortino", "calmar", "profit_factor",
+             "final_capital", "consistency", "weekly_sharpe", "win_rate")
     top_n : number of top candidates to walk-forward validate
     initial_capital : starting capital for backtests
     capital_per_trade_pct : fraction of capital deployed per trade (0-1)
@@ -351,12 +430,15 @@ def discover_strategies(
     max_trades_per_day : max entries per trading day
     cooldown_bars : minimum bars between consecutive trades
     max_daily_loss_pct : stop trading for the day if loss exceeds this %
+    min_trades : minimum trades required for a strategy to be considered
+                 (filters out low-significance strategies with few trades)
     verbose : print progress
 
     Returns
     -------
     (results_df, best_candidates)
-    results_df : DataFrame with columns [name, train_score, test_score, ...]
+    results_df : DataFrame with columns [name, train_score, test_score,
+                  consistency, weekly_sharpe, win_rate, profit_factor, total_trades, ...]
     best_candidates : list of StrategyCandidate objects for the top strategies
     """
     from mtrader.backtest import run_backtest, walk_forward_splits, trade_log
@@ -447,6 +529,9 @@ def discover_strategies(
                     cooldown_bars=cooldown_bars,
                     max_daily_loss_pct=max_daily_loss_pct,
                 )
+                total_trades_fold = r.report.get("total_trades", 0)
+
+                # Compute metric
                 if metric == "sharpe":
                     score = r.metrics.get("Sharpe Ratio", -999)
                 elif metric == "sortino":
@@ -455,12 +540,26 @@ def discover_strategies(
                     score = r.report.get("calmar_ratio", -999)
                 elif metric == "profit_factor":
                     score = r.report.get("profit_factor", -999)
+                elif metric == "win_rate":
+                    score = r.report.get("win_rate_pct", -999)
+                elif metric == "consistency":
+                    wk = _compute_weekly_consistency(r.trades, initial_capital)
+                    score = wk["consistency"]
+                elif metric == "weekly_sharpe":
+                    wk = _compute_weekly_consistency(r.trades, initial_capital)
+                    score = wk["weekly_sharpe"]
                 else:
                     score = r.final_capital
+
+                # Apply min_trades filter
+                if total_trades_fold < min_trades:
+                    score = -999
+
                 if score is None or (isinstance(score, float) and np.isnan(score)):
                     score = -999
             except Exception:
                 score = -999
+                total_trades_fold = 0
 
             train_scores.append(score)
 
@@ -471,6 +570,10 @@ def discover_strategies(
 
         cand.score = avg_score
         evaluated_candidates.append(cand)
+
+        # Compute consistency on the last fold's trades for display
+        wk_metrics = _compute_weekly_consistency(r.trades, initial_capital) if 'r' in dir() else {}
+
         results_rows.append({
             "name": cand.name,
             "side": cand.side,
@@ -478,12 +581,19 @@ def discover_strategies(
             "target": cand.target_delta_normalized,
             "stoploss": cand.stoploss_delta_normalized,
             f"{metric}_train": avg_score,
-            "total_trades": 0,
+            "total_trades": total_trades_fold if 'total_trades_fold' in dir() else 0,
+            "consistency": wk_metrics.get("consistency", 0),
+            "weekly_sharpe": wk_metrics.get("weekly_sharpe", 0),
+            "win_rate": 0.0,
+            "profit_factor": 0.0,
         })
 
     # 4. Sort and pick top_n for walk-forward validation
     results_df = pd.DataFrame(results_rows)
-    results_df = results_df.sort_values(f"{metric}_train", ascending=False).reset_index(drop=True)
+    # Remove strategies that never met min_trades
+    results_df = results_df[results_df["total_trades"] > 0].copy()
+    sort_col = f"{metric}_train" if f"{metric}_train" in results_df.columns else "total_trades"
+    results_df = results_df.sort_values(sort_col, ascending=False).reset_index(drop=True)
 
     top_df = results_df.head(top_n).copy()
     best_candidates = sorted(evaluated_candidates, key=lambda c: c.score, reverse=True)[:top_n]
@@ -557,12 +667,16 @@ def quick_rank_strategies(
     max_trades_per_day: int | None = None,
     cooldown_bars: int = 0,
     max_daily_loss_pct: float | None = None,
+    min_trades: int = 10,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """Quickly rank a list of pre-defined strategies on the given data.
 
     Pre-computes all indicators once, then evaluates each strategy.
     Much faster than running each strategy independently.
+
+    Additional columns in output: consistency, weekly_sharpe, win_rate, profit_factor.
+    min_trades filters out strategies with too few trades (avoids overfit).
     """
     from mtrader.backtest import run_backtest
     from mtrader.indicator_engine import add_indicators
@@ -598,27 +712,58 @@ def quick_rank_strategies(
                 cooldown_bars=cooldown_bars,
                 max_daily_loss_pct=max_daily_loss_pct,
             )
-            score = r.metrics.get("Sharpe Ratio", r.final_capital)
+            total_trades = r.report.get("total_trades", 0)
+            wk = _compute_weekly_consistency(r.trades, initial_capital)
+
+            if metric == "sharpe":
+                score = r.metrics.get("Sharpe Ratio", -999)
+            elif metric == "sortino":
+                score = r.report.get("sortino_ratio", -999)
+            elif metric == "calmar":
+                score = r.report.get("calmar_ratio", -999)
+            elif metric == "profit_factor":
+                score = r.report.get("profit_factor", -999)
+            elif metric == "win_rate":
+                score = r.report.get("win_rate_pct", -999)
+            elif metric == "consistency":
+                score = wk["consistency"]
+            elif metric == "weekly_sharpe":
+                score = wk["weekly_sharpe"]
+            else:
+                score = r.final_capital
+
+            if total_trades < min_trades:
+                score = -999
+
             rows.append({
                 "name": s.name, "side": s.side,
-                "trades": r.report.get("total_trades", 0),
+                "trades": total_trades,
                 "final_capital": r.final_capital,
                 "sharpe": r.metrics.get("Sharpe Ratio"),
                 "sortino": r.report.get("sortino_ratio"),
                 "calmar": r.report.get("calmar_ratio"),
                 "win_rate": r.report.get("win_rate_pct"),
                 "profit_factor": r.report.get("profit_factor"),
+                "consistency": wk["consistency"],
+                "weekly_sharpe": wk["weekly_sharpe"],
+                "profitable_weeks": wk["profitable_weeks"],
+                "total_weeks": wk["total_weeks"],
             })
             if verbose:
-                print(f"score={score:.3f}, trades={rows[-1]['trades']}")
+                print(f"score={score:.3f}, trades={total_trades}, "
+                      f"consistency={wk['consistency']:.0%}, weeks={wk['total_weeks']}")
         except Exception as e:
             rows.append({"name": s.name, "side": s.side,
                          "trades": 0, "final_capital": initial_capital,
-                         metric: -999, "error": str(e)})
+                         metric: -999, "error": str(e),
+                         "consistency": 0.0, "weekly_sharpe": 0.0,
+                         "profitable_weeks": 0, "total_weeks": 0})
             if verbose:
                 print(f"FAIL: {e}")
 
     results = pd.DataFrame(rows)
+    if min_trades > 0 and "trades" in results.columns:
+        results = results[results["trades"] >= min_trades].copy()
     sort_by = metric if metric in results.columns else "sharpe"
     if sort_by in results.columns:
         results = results.sort_values(sort_by, ascending=False).reset_index(drop=True)
