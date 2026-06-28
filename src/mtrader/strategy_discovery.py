@@ -5,6 +5,9 @@ from itertools import product, combinations
 from typing import Any, Callable
 import numpy as np
 import pandas as pd
+import json
+import os
+import time
 
 
 # ── Indicator catalog: what kinds of strategies can be built ──────
@@ -398,6 +401,9 @@ def discover_strategies(
     cooldown_bars: int = 0,
     max_daily_loss_pct: float | None = None,
     min_trades: int = 10,
+    checkpoint_path: str | None = None,
+    resume: bool = False,
+    checkpoint_freq: int = 50,
     verbose: bool = True,
 ) -> tuple[pd.DataFrame, list[StrategyCandidate]]:
     """Auto-discover profitable strategies from OHLCV data.
@@ -409,6 +415,10 @@ def discover_strategies(
     4. Filter by min_trades (avoid low-significance strategies)
     5. Validate top candidates on out-of-sample test data
     6. Return ranked results + best StrategyCandidate objects
+
+    Supports checkpoint/resume for long-running discovery:
+      checkpoint_path='/path/to/checkpoint_dir'
+      resume=True   # resume from last checkpoint
 
     Parameters
     ----------
@@ -432,6 +442,9 @@ def discover_strategies(
     max_daily_loss_pct : stop trading for the day if loss exceeds this %
     min_trades : minimum trades required for a strategy to be considered
                  (filters out low-significance strategies with few trades)
+    checkpoint_path : directory to save checkpoint files for resume support
+    resume : if True, load last checkpoint and skip already-evaluated candidates
+    checkpoint_freq : save checkpoint every N candidates
     verbose : print progress
 
     Returns
@@ -490,23 +503,78 @@ def discover_strategies(
     # 3. Get walk-forward splits
     unique_days = data["datetime"].dt.normalize().unique()
     if test_days <= 0 or len(unique_days) < train_days + test_days:
-        # If not enough data or no test needed, use full data for training
         split_idx = int(len(data) * 0.7)
         splits = [(np.arange(split_idx), np.arange(split_idx, len(data)))]
     else:
         splits = walk_forward_splits(data, train_days, test_days)
 
+    # ── Checkpoint setup ──────────────────────────────────────────
+    _checkpoint_meta_path = None
+    _checkpoint_csv_path = None
+    if checkpoint_path is not None:
+        os.makedirs(checkpoint_path, exist_ok=True)
+        _checkpoint_csv_path = os.path.join(checkpoint_path, "discovery_results.csv")
+        _checkpoint_meta_path = os.path.join(checkpoint_path, "discovery_meta.json")
+
+    done_set: set[int] = set()
+    if resume and checkpoint_path is not None and os.path.exists(_checkpoint_meta_path):
+        try:
+            with open(_checkpoint_meta_path) as f:
+                meta = json.load(f)
+            done_set = set(meta.get("done_indices", []))
+            if verbose:
+                print(f"  Resuming: {len(done_set)} candidates already evaluated")
+        except Exception:
+            done_set = set()
+
+    def _save_checkpoint(done_indices: list[int], results_rows: list[dict],
+                         phase: str = "candidates"):
+        if _checkpoint_csv_path is None:
+            return
+        try:
+            meta = {"done_indices": sorted(done_indices), "phase": phase,
+                    "timestamp": time.time(), "metric": metric}
+            with open(_checkpoint_meta_path, "w") as f:
+                json.dump(meta, f)
+            if results_rows:
+                pd.DataFrame(results_rows).to_csv(_checkpoint_csv_path, index=False)
+        except Exception:
+            pass
+
     results_rows = []
     evaluated_candidates: list[StrategyCandidate] = []
 
+    # On resume with full checkpoint, load cached results
+    if resume and len(done_set) == len(all_candidates) and _checkpoint_csv_path is not None:
+        if verbose:
+            print(f"  All {len(all_candidates)} candidates already evaluated. Loading checkpoint...")
+        try:
+            cached = pd.read_csv(_checkpoint_csv_path)
+            if len(cached) == len(all_candidates):
+                results_rows = cached.to_dict("records")
+                # Rebuild evaluated_candidates from cached scores
+                for ci, cand in enumerate(all_candidates):
+                    if ci < len(cached):
+                        cand.score = cached.iloc[ci].get(f"{metric}_train", -999)
+                    evaluated_candidates.append(cand)
+                if verbose:
+                    print(f"  Loaded {len(results_rows)} cached results")
+        except Exception:
+            results_rows = []
+            evaluated_candidates = []
+
     # Process in batches for efficiency
-    batch_size = max(1, len(all_candidates) // 20)
+    batch_size = max(1, min(checkpoint_freq, len(all_candidates) // 20))
+    report_batch = max(1, len(all_candidates) // 20)
+    t_start = time.time()
 
     for ci, cand in enumerate(all_candidates):
-        if verbose and ci % batch_size == 0:
-            print(f"    Evaluating {ci + 1}/{len(all_candidates)}...")
+        # Skip if already done (resume mode)
+        if ci in done_set:
+            continue
 
         train_scores = []
+        total_trades_fold = 0
         for fold_no, (train_idx, _) in enumerate(splits[:min(3, len(splits))]):
             train_data = data.iloc[train_idx].copy()
             if len(train_data) < 20:
@@ -531,7 +599,6 @@ def discover_strategies(
                 )
                 total_trades_fold = r.report.get("total_trades", 0)
 
-                # Compute metric
                 if metric == "sharpe":
                     score = r.metrics.get("Sharpe Ratio", -999)
                 elif metric == "sortino":
@@ -551,10 +618,8 @@ def discover_strategies(
                 else:
                     score = r.final_capital
 
-                # Apply min_trades filter
                 if total_trades_fold < min_trades:
                     score = -999
-
                 if score is None or (isinstance(score, float) and np.isnan(score)):
                     score = -999
             except Exception:
@@ -570,10 +635,9 @@ def discover_strategies(
 
         cand.score = avg_score
         evaluated_candidates.append(cand)
+        done_set.add(ci)
 
-        # Compute consistency on the last fold's trades for display
         wk_metrics = _compute_weekly_consistency(r.trades, initial_capital) if 'r' in dir() else {}
-
         results_rows.append({
             "name": cand.name,
             "side": cand.side,
@@ -581,17 +645,39 @@ def discover_strategies(
             "target": cand.target_delta_normalized,
             "stoploss": cand.stoploss_delta_normalized,
             f"{metric}_train": avg_score,
-            "total_trades": total_trades_fold if 'total_trades_fold' in dir() else 0,
+            "total_trades": total_trades_fold,
             "consistency": wk_metrics.get("consistency", 0),
             "weekly_sharpe": wk_metrics.get("weekly_sharpe", 0),
             "win_rate": 0.0,
             "profit_factor": 0.0,
         })
 
+        # Progress & checkpoint
+        if verbose and (ci + 1) % report_batch == 0:
+            elapsed = time.time() - t_start
+            done = len(done_set)
+            total = len(all_candidates)
+            pct = done / total * 100 if total > 0 else 0
+            if done > 0:
+                eta_sec = (elapsed / done) * (total - done)
+                eta_str = f", ETA: {eta_sec:.0f}s" if eta_sec < 3600 else f", ETA: {eta_sec/60:.1f}min"
+            else:
+                eta_str = ""
+            print(f"    [{done}/{total}] ({pct:.0f}%){eta_str}")
+
+        # Save checkpoint
+        if checkpoint_path is not None and (ci + 1) % checkpoint_freq == 0:
+            _save_checkpoint(list(done_set), results_rows, "candidates")
+
+    # Save final checkpoint after candidate evaluation
+    _save_checkpoint(list(done_set), results_rows, "candidates")
+
     # 4. Sort and pick top_n for walk-forward validation
     results_df = pd.DataFrame(results_rows)
-    # Remove strategies that never met min_trades
-    results_df = results_df[results_df["total_trades"] > 0].copy()
+    if results_df.empty:
+        return pd.DataFrame(), []
+    if "total_trades" in results_df.columns:
+        results_df = results_df[results_df["total_trades"] > 0].copy()
     sort_col = f"{metric}_train" if f"{metric}_train" in results_df.columns else "total_trades"
     results_df = results_df.sort_values(sort_col, ascending=False).reset_index(drop=True)
 
@@ -646,11 +732,21 @@ def discover_strategies(
         if verbose:
             print(f"    [{i+1}/{top_n}] {cand.name}: train={cand.score:.3f}, test={avg_test:.3f}, trades={total_trades}")
 
+        # Save checkpoint during validation too
+        _save_checkpoint(list(done_set), results_rows, f"validate_{i+1}")
+
     # 6. Rank by test score, fallback to train score
     sort_col = f"{metric}_test" if f"{metric}_test" in top_df.columns else f"{metric}_train"
     top_df = top_df.sort_values(sort_col, ascending=False).reset_index(drop=True)
     for i in range(len(best_candidates)):
         best_candidates[i].rank = i + 1
+
+    # Save final results
+    if checkpoint_path is not None:
+        final_path = os.path.join(checkpoint_path, "discovery_final_results.csv")
+        top_df.to_csv(final_path, index=False)
+        if verbose:
+            print(f"  Final results saved to {final_path}")
 
     return top_df, best_candidates
 
