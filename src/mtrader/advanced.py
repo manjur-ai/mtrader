@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
+from mtrader.backtest import condition
 
 
 @dataclass
@@ -460,3 +461,210 @@ def grid_from_ranges(**params: Any) -> list[dict[str, Any]]:
     keys = list(params)
     vals = [v if isinstance(v, (list, tuple, np.ndarray, pd.Index)) else [v] for v in params.values()]
     return [dict(zip(keys, combo)) for combo in product(*vals)]
+
+
+# ── Strategy presets ──────────────────────────────────────────────
+
+def make_sma_crossover(fast: int = 20, slow: int = 50, side: str = "buy",
+                       target_pct: float = 0.5, stop_pct: float = 0.25,
+                       **kwargs) -> Strategy:
+    """Create an SMA crossover strategy."""
+    return Strategy(
+        name=f"SMA({fast}/{slow}) Crossover",
+        indicators=["sma1"], rolling_minutes=[fast, slow],
+        entry_conditions=[[condition(f"can1_sma1_p{fast}", f"can1_sma1_p{slow}", lower=0)]],
+        exit_conditions=[[condition(f"can1_sma1_p{slow}", f"can1_sma1_p{fast}", lower=0)]],
+        side=side, target_delta_normalized=target_pct, stoploss_delta_normalized=stop_pct,
+        **kwargs,
+    )
+
+
+def make_ema_crossover(fast: int = 9, slow: int = 21, side: str = "buy",
+                       target_pct: float = 0.5, stop_pct: float = 0.25,
+                       **kwargs) -> Strategy:
+    """Create an EMA crossover strategy."""
+    return Strategy(
+        name=f"EMA({fast}/{slow}) Crossover",
+        indicators=["ema1"], rolling_minutes=[fast, slow],
+        entry_conditions=[[condition(f"can1_ema1_p{fast}", f"can1_ema1_p{slow}", lower=0)]],
+        exit_conditions=[[condition(f"can1_ema1_p{slow}", f"can1_ema1_p{fast}", lower=0)]],
+        side=side, target_delta_normalized=target_pct, stoploss_delta_normalized=stop_pct,
+        **kwargs,
+    )
+
+
+def make_rsi_oversold(period: int = 14, threshold: float = 30,
+                      target_pct: float = 0.5, stop_pct: float = 0.25,
+                      **kwargs) -> Strategy:
+    """Create an RSI oversold bounce (long) or overbought fade (short) strategy."""
+    side = kwargs.pop("side", "buy")
+    cond = [[condition(f"can1_rsi_p{period}", upper=threshold)]] if side == "buy" else \
+           [[condition(f"can1_rsi_p{period}", lower=100 - threshold)]]
+    return Strategy(
+        name=f"RSI({period}) {'Oversold' if side=='buy' else 'Overbought'}",
+        indicators=["rsi"], rolling_minutes=[period],
+        entry_conditions=cond,
+        side=side, target_delta_normalized=target_pct, stoploss_delta_normalized=stop_pct,
+        **kwargs,
+    )
+
+
+def make_macd_crossover(side: str = "buy",
+                        target_pct: float = 0.5, stop_pct: float = 0.25,
+                        **kwargs) -> Strategy:
+    """Create a MACD line/signal crossover strategy."""
+    if side == "buy":
+        entry = [[condition("can1_macd", "can1_macdsignal", upper=0, shift_first=1, shift_second=1),
+                  condition("can1_macd", "can1_macdsignal", lower=0)]]
+        exit_c = [[condition("can1_macdsignal", "can1_macd", upper=0, shift_first=1, shift_second=1),
+                   condition("can1_macdsignal", "can1_macd", lower=0)]]
+    else:
+        entry = [[condition("can1_macdsignal", "can1_macd", upper=0, shift_first=1, shift_second=1),
+                  condition("can1_macdsignal", "can1_macd", lower=0)]]
+        exit_c = [[condition("can1_macd", "can1_macdsignal", upper=0, shift_first=1, shift_second=1),
+                   condition("can1_macd", "can1_macdsignal", lower=0)]]
+    return Strategy(
+        name=f"MACD {'Bullish' if side=='buy' else 'Bearish'} Crossover",
+        indicators=["macd"], rolling_minutes=[],
+        entry_conditions=entry, exit_conditions=exit_c,
+        side=side, target_delta_normalized=target_pct, stoploss_delta_normalized=stop_pct,
+        **kwargs,
+    )
+
+
+def make_bollinger_rsi(bb_period: int = 20, rsi_period: int = 14,
+                       target_pct: float = 0.5, stop_pct: float = 0.25,
+                       **kwargs) -> Strategy:
+    """Bollinger Band %B + RSI multi-condition strategy."""
+    return Strategy(
+        name=f"Bollinger({bb_period})+RSI({rsi_period})",
+        indicators=["bbp", "rsi"], rolling_minutes=[bb_period, rsi_period],
+        entry_conditions=[[
+            condition(f"can1_bbp_p{bb_period}", upper=0.2),
+            condition(f"can1_rsi_p{rsi_period}", upper=35),
+        ]],
+        side="buy", target_delta_normalized=target_pct, stoploss_delta_normalized=stop_pct,
+        **kwargs,
+    )
+
+
+PRESET_MAP = {
+    "sma_crossover": make_sma_crossover,
+    "ema_crossover": make_ema_crossover,
+    "rsi_oversold": make_rsi_oversold,
+    "macd_crossover": make_macd_crossover,
+    "bollinger_rsi": make_bollinger_rsi,
+}
+
+
+def strategy_from_preset(name: str, **overrides) -> Strategy:
+    """Create a strategy from a named preset.
+
+    Presets: sma_crossover, ema_crossover, rsi_oversold, macd_crossover, bollinger_rsi
+
+    Usage:
+      strat = strategy_from_preset("sma_crossover", fast=10, slow=30, side="sell")
+    """
+    if name not in PRESET_MAP:
+        available = ", ".join(sorted(PRESET_MAP.keys()))
+        raise ValueError(f"Unknown preset '{name}'. Available: {available}")
+    return PRESET_MAP[name](**overrides)
+
+
+# ── Strategy correlation analysis ─────────────────────────────────
+
+def correlate_strategies(
+    df: pd.DataFrame,
+    strategies: list[Strategy],
+    initial_capital: float = 10000,
+    top_n: int | None = None,
+    verbose: bool = True,
+) -> dict[str, Any]:
+    """Run multiple strategies on the same data and analyze their correlation.
+
+    Returns a dict with:
+      'results': list of (Strategy, BacktestResult) pairs
+      'equity_df': DataFrame with equity curves for each strategy
+      'correlation': correlation matrix of equity curves
+      'diverse_set': recommended subset of strategies with low correlation
+      'ranking': combined ranking considering both performance and diversity
+
+    Use 'diverse_set' to pick strategies that work well together (portfolio).
+    """
+    from itertools import combinations
+
+    results_list = []
+    equity_curves = {}
+
+    for i, strat in enumerate(strategies):
+        if verbose:
+            print(f"  [{i+1}/{len(strategies)}] {strat.name} ... ", end="")
+        try:
+            r = strat.run(df, initial_capital=initial_capital)
+            results_list.append((strat, r))
+            eq = r.equity[["datetime", "equity"]].copy()
+            eq = eq.rename(columns={"equity": strat.name})
+            equity_curves[strat.name] = eq
+            if verbose:
+                print(f"final={r.final_capital:.0f}, trades={r.report.get('total_trades', 0)}")
+        except Exception as e:
+            if verbose:
+                print(f"FAIL: {e}")
+
+    if not equity_curves:
+        return {"results": [], "equity_df": pd.DataFrame(), "correlation": pd.DataFrame(),
+                "diverse_set": [], "ranking": pd.DataFrame()}
+
+    # Merge equity curves
+    eq_list = list(equity_curves.values())
+    equity_df = eq_list[0]
+    for eq in eq_list[1:]:
+        equity_df = pd.merge_asof(
+            equity_df.sort_values("datetime"),
+            eq.sort_values("datetime"),
+            on="datetime", direction="backward",
+        )
+    value_cols = [c for c in equity_df.columns if c != "datetime"]
+    equity_df[value_cols] = equity_df[value_cols].ffill().fillna(initial_capital)
+
+    # Correlation matrix of daily returns
+    daily_returns = equity_df[value_cols].pct_change().dropna()
+    corr = daily_returns.cov() if len(daily_returns) < 2 else daily_returns.corr()
+
+    # Build ranking with diversity info
+    ranking_rows = []
+    for strat, r in results_list:
+        ranking_rows.append({
+            "name": strat.name,
+            "final_capital": r.final_capital,
+            "total_trades": r.report.get("total_trades", 0),
+            "sharpe": r.metrics.get("Sharpe Ratio"),
+        })
+    ranking = pd.DataFrame(ranking_rows).sort_values("sharpe", ascending=False)
+
+    # Find diverse set: greedy selection of top strategies with low correlation
+    diverse_set = []
+    if len(strategies) >= 2 and len(corr) >= 2:
+        sorted_strats = ranking["name"].tolist()
+        diverse_set.append(sorted_strats[0])
+        for s_name in sorted_strats[1:]:
+            if s_name not in corr.columns or s_name not in corr.index:
+                continue
+            max_corr = max(abs(corr.loc[s_name, d]) for d in diverse_set if d in corr.columns)
+            if max_corr < 0.7:  # correlation threshold
+                diverse_set.append(s_name)
+                if top_n and len(diverse_set) >= top_n:
+                    break
+        if not diverse_set:
+            diverse_set = sorted_strats[:1]
+
+    # Final ranking: combined score
+    ranking["in_diverse_set"] = ranking["name"].isin(diverse_set)
+
+    return {
+        "results": results_list,
+        "equity_df": equity_df,
+        "correlation": corr,
+        "diverse_set": diverse_set,
+        "ranking": ranking,
+    }
