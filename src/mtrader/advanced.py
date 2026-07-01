@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import product
 import json
 from pathlib import Path
@@ -269,6 +269,25 @@ class Strategy:
             max_trades_per_day=params["max_trades_per_day"],
             cooldown_bars=params["cooldown_bars"],
             max_daily_loss_pct=params["max_daily_loss_pct"],
+        )
+
+    def run_oms(self, df: pd.DataFrame, **overrides: Any) -> Any:
+        """Run with OMS-like single-position execution semantics."""
+        from mtrader.backtest import run_oms_backtest
+
+        strategy_fields = set(self.__dataclass_fields__)
+        strategy_overrides = {
+            key: value for key, value in overrides.items()
+            if key in strategy_fields
+        }
+        strategy = replace(self, **strategy_overrides)
+        return run_oms_backtest(
+            df,
+            strategy,
+            lot_size=overrides.get("lot_size", 1.0),
+            initial_capital=overrides.get("initial_capital", strategy.initial_capital),
+            history_size=overrides.get("history_size", 512),
+            close_open_at_end=overrides.get("close_open_at_end", False),
         )
 
     def to_live(self, history_df: pd.DataFrame, **overrides: Any) -> Any:

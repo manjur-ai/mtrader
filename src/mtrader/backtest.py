@@ -262,6 +262,231 @@ def run_backtest(
     return BacktestResult(data, log, float(final_capital), metrics, report, equity)
 
 
+def run_oms_backtest(
+    df: pd.DataFrame,
+    strategy: Any,
+    *,
+    lot_size: float = 1.0,
+    initial_capital: float | None = None,
+    history_size: int = 512,
+    close_open_at_end: bool = False,
+) -> BacktestResult:
+    """
+    Run a mtrader Strategy with OMS-like single-position execution semantics.
+
+    This is intentionally different from the vectorized run_backtest path:
+    it evaluates mtrader live signals bar-by-bar, allows only one open trade,
+    fills market entries at the signal bar open, and exits via SL/TP before
+    evaluating the next signal.
+    """
+    validate_ohlcv(df, require_volume=False)
+    data = df.copy().sort_values("datetime").reset_index(drop=True)
+    capital_start = float(
+        initial_capital if initial_capital is not None
+        else getattr(strategy, "initial_capital", 1000.0)
+    )
+    side = (getattr(strategy, "side", "buy") or "buy").lower()
+    qty = float(lot_size)
+    live_engine = None
+    open_trade = None
+    trades = []
+    equity_rows = []
+    equity = capital_start
+
+    for i, row in data.iterrows():
+        bar = row.to_dict()
+
+        if open_trade is not None:
+            closed = _oms_exit_for_bar(open_trade, i, bar)
+            if closed is not None:
+                equity += closed["profit"]
+                trades.append(closed)
+                open_trade = None
+
+        if live_engine is None:
+            if i == 0:
+                equity_rows.append({
+                    "datetime": bar["datetime"],
+                    "equity": equity,
+                    "drawdown_pct": 0.0,
+                    "trade": False,
+                })
+                continue
+            from mtrader.live import live_strategy_from_history
+
+            history = data.iloc[max(0, i - history_size):i]
+            live_engine = live_strategy_from_history(
+                history,
+                indicators=list(getattr(strategy, "indicators", []) or []),
+                periods=list(getattr(strategy, "rolling_minutes", []) or []),
+                entry_conditions=getattr(strategy, "entry_conditions", []) or [],
+                exit_conditions=getattr(strategy, "exit_conditions", None),
+                side=side,
+                history_size=history_size,
+                warmup_batch=True,
+            )
+
+        signal = live_engine.update(bar)
+
+        if open_trade is not None and signal.get("exit_signal"):
+            closed = _close_oms_trade(open_trade, i, bar, float(bar["close"]), "mtrader_exit_signal")
+            equity += closed["profit"]
+            trades.append(closed)
+            open_trade = None
+            equity_rows.append({
+                "datetime": bar["datetime"],
+                "equity": equity,
+                "drawdown_pct": 0.0,
+                "trade": True,
+            })
+            continue
+
+        if open_trade is None and signal.get("entry_signal"):
+            entry_price = float(bar["open"])
+            open_trade = _open_oms_trade(strategy, side, qty, i, bar, entry_price)
+
+        equity_rows.append({
+            "datetime": bar["datetime"],
+            "equity": equity,
+            "drawdown_pct": 0.0,
+            "trade": False,
+        })
+
+    if close_open_at_end and open_trade is not None and len(data) > 0:
+        row = data.iloc[-1].to_dict()
+        closed = _close_oms_trade(open_trade, len(data) - 1, row, float(row["close"]), "end")
+        equity += closed["profit"]
+        trades.append(closed)
+
+    trades_df = pd.DataFrame(trades)
+    report = _oms_report_from_trades(trades_df, capital_start, equity)
+    equity_df = pd.DataFrame(equity_rows)
+    if not equity_df.empty:
+        equity_df["equity"] = equity_df["equity"].ffill().fillna(capital_start)
+        peak = equity_df["equity"].cummax()
+        equity_df["drawdown_pct"] = (peak - equity_df["equity"]) / peak * 100.0
+    metrics = {
+        "total_trades": report["total_trades"],
+        "final_capital": report["final_capital"],
+        "profit_factor": report["profit_factor"],
+        "win_rate_pct": report["win_rate_pct"],
+    }
+    return BacktestResult(data, trades_df, float(equity), metrics, report, equity_df)
+
+
+def _open_oms_trade(strategy: Any, side: str, qty: float, index: int, bar: dict, entry_price: float) -> dict:
+    target = _target_price(strategy, side, entry_price)
+    stop = _stop_price(strategy, side, entry_price)
+    return {
+        "entry_index": int(index),
+        "entry_time": bar["datetime"],
+        "side": side,
+        "qty": qty,
+        "entry_price": entry_price,
+        "target_price": target,
+        "stoploss_price": stop,
+    }
+
+
+def _target_price(strategy: Any, side: str, entry_price: float) -> float | None:
+    absolute = getattr(strategy, "target_delta", None)
+    percent = getattr(strategy, "target_delta_normalized", None)
+    if absolute is None and percent is None:
+        return None
+    points = float(absolute) if absolute is not None else entry_price * float(percent) / 100.0
+    return entry_price + points if side == "buy" else entry_price - points
+
+
+def _stop_price(strategy: Any, side: str, entry_price: float) -> float | None:
+    absolute = getattr(strategy, "stoploss_delta", None)
+    percent = getattr(strategy, "stoploss_delta_normalized", None)
+    if absolute is None and percent is None:
+        return None
+    points = float(absolute) if absolute is not None else entry_price * float(percent) / 100.0
+    return entry_price - points if side == "buy" else entry_price + points
+
+
+def _oms_exit_for_bar(trade: dict, exit_index: int, bar: dict) -> dict | None:
+    side = trade["side"]
+    open_price = float(bar["open"])
+    high = float(bar["high"])
+    low = float(bar["low"])
+    stop = trade.get("stoploss_price")
+    target = trade.get("target_price")
+
+    if side == "buy":
+        stop_hit = stop is not None and low <= stop
+        target_hit = target is not None and high >= target
+        if stop_hit:
+            exit_price = open_price if open_price <= stop else stop
+            return _close_oms_trade(trade, exit_index, bar, exit_price, "sl_hit")
+        if target_hit:
+            exit_price = open_price if open_price >= target else target
+            return _close_oms_trade(trade, exit_index, bar, exit_price, "tp_hit")
+    else:
+        stop_hit = stop is not None and high >= stop
+        target_hit = target is not None and low <= target
+        if stop_hit:
+            exit_price = open_price if open_price >= stop else stop
+            return _close_oms_trade(trade, exit_index, bar, exit_price, "sl_hit")
+        if target_hit:
+            exit_price = open_price if open_price <= target else target
+            return _close_oms_trade(trade, exit_index, bar, exit_price, "tp_hit")
+    return None
+
+
+def _close_oms_trade(trade: dict, exit_index: int | None, bar: dict, exit_price: float, reason: str) -> dict:
+    entry_price = float(trade["entry_price"])
+    qty = float(trade["qty"])
+    is_long = trade["side"] == "buy"
+    profit = round(((exit_price - entry_price) if is_long else (entry_price - exit_price)) * qty, 4)
+    idx = int(exit_index) if exit_index is not None else None
+    return {
+        "entry_index": trade["entry_index"],
+        "entry_time": trade["entry_time"],
+        "exit_index": idx,
+        "exit_time": bar["datetime"],
+        "side": trade["side"],
+        "qty": qty,
+        "entry_price": entry_price,
+        "exit_price": float(exit_price),
+        "profit": profit,
+        "return_pct": (profit / (entry_price * qty)) * 100.0 if entry_price and qty else 0.0,
+        "exit_reason": reason,
+        "target_price": trade.get("target_price"),
+        "stoploss_price": trade.get("stoploss_price"),
+    }
+
+
+def _oms_report_from_trades(trades: pd.DataFrame, initial_capital: float, final_capital: float) -> dict[str, Any]:
+    if trades.empty:
+        return {
+            "total_trades": 0,
+            "final_capital": round(final_capital, 4),
+            "total_return_pct": round((final_capital - initial_capital) / initial_capital * 100, 2),
+            "win_rate_pct": 0.0,
+            "profit_factor": None,
+            "max_drawdown_pct": 0.0,
+        }
+    profits = trades["profit"].to_numpy(dtype=np.float64)
+    wins = profits[profits > 0]
+    losses = profits[profits < 0]
+    gross_profit = float(wins.sum()) if len(wins) else 0.0
+    gross_loss = float(losses.sum()) if len(losses) else 0.0
+    profit_factor = None if gross_loss == 0 else gross_profit / abs(gross_loss)
+    return {
+        "total_trades": int(len(trades)),
+        "final_capital": round(final_capital, 4),
+        "total_return_pct": round((final_capital - initial_capital) / initial_capital * 100, 2),
+        "win_rate_pct": round((len(wins) / len(trades)) * 100.0, 2),
+        "profit_factor": round(profit_factor, 4) if profit_factor is not None else None,
+        "net_pnl": round(float(profits.sum()), 4),
+        "gross_profit": round(gross_profit, 4),
+        "gross_loss": round(gross_loss, 4),
+        "max_drawdown_pct": 0.0,
+    }
+
+
 def trade_log(df: pd.DataFrame, side: str | None = None, initial_capital: float = 1000) -> pd.DataFrame:
     """Extract a trade-by-trade log from backtest results: entry/exit times, prices, profit, return %, capital progression, and exit reason."""
     required = {"take_trade", "next_exit_datetime", "next_exit_value", "capital_at_exit", "close"}

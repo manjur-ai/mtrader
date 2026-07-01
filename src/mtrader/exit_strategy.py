@@ -104,7 +104,7 @@ def precalculate_exit_time_amount_profit(
         if target_delta_column is not None:
             target_delta = df[target_delta_column].to_numpy(dtype=np.float64)
         elif target_delta_normalized is not None:
-            target_delta = target_delta_normalized * (close_prices / 10000.0)
+            target_delta = target_delta_normalized * (close_prices / 100.0)
 
         if buy_or_sell == "buy":
             target_prices = close_prices + target_delta
@@ -129,7 +129,7 @@ def precalculate_exit_time_amount_profit(
         if stoploss_delta_column is not None:
             stoploss_delta = df[stoploss_delta_column].to_numpy(dtype=np.float64)
         elif stoploss_delta_normalized is not None:
-            stoploss_delta = stoploss_delta_normalized * (close_prices / 10000.0)
+            stoploss_delta = stoploss_delta_normalized * (close_prices / 100.0)
 
         if buy_or_sell == "buy":
             if stoploss_wait_candleclose:
